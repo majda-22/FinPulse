@@ -45,3 +45,5 @@ def test_openapi_registers_expected_paths():
     assert "/api/v1/signals/{ticker}" in schema["paths"]
     assert "/api/v1/signals/{ticker}/history" in schema["paths"]
     assert "/api/v1/filings/{ticker}" in schema["paths"]
+    assert "/api/v1/embeddings/{ticker}" in schema["paths"]
+    assert "/api/v1/embeddings/{ticker}/latest" in schema["paths"]

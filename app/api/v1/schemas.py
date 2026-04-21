@@ -61,6 +61,24 @@ class NewsItem(BaseModel):
     sentiment_score: float | None
 
 
+class EmbeddingRow(BaseModel):
+    id: int
+    filing_id: int
+    filing_section_id: int
+    accession_number: str
+    form_type: str
+    filed_at: date
+    section: str
+    chunk_idx: int
+    text: str
+    embedding: list[float] | None
+    provider: str
+    embedding_model: str
+    reconstruction_error: float | None
+    anomaly_score: float | None
+    created_at: datetime
+
+
 class ScoreResponse(BaseModel):
     ticker: str
     company_name: str

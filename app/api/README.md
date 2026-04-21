@@ -258,6 +258,77 @@ Purpose:
 - Return filing rows for one company
 - Useful for pipeline inspection and operational debugging
 
+### `GET /api/v1/embeddings/{ticker}`
+
+Purpose:
+- Return stored embedding chunks for one company
+- Useful when you want access to `embeddings.text` and `embeddings.embedding`
+
+Path parameter:
+- `ticker`
+
+Query parameters:
+- `filing_id`: optional filing filter
+- `form_type`: optional filing-type filter such as `10-K` or `10-Q`
+- `section`: optional filing-section filter such as `risk_factors` or `mda`
+- `include_vector`: whether to include the numeric embedding vector, default `true`
+- `limit`: max rows to return, default `20`, max `500`
+
+Each row contains:
+- `id`
+- `filing_id`
+- `filing_section_id`
+- `accession_number`
+- `form_type`
+- `filed_at`
+- `section`
+- `chunk_idx`
+- `text`
+- `embedding`
+- `provider`
+- `embedding_model`
+- `reconstruction_error`
+- `anomaly_score`
+- `created_at`
+
+Typical use:
+- Inspecting chunk text that was embedded
+- Exporting vectors for downstream retrieval or debugging
+- Verifying which filing sections produced stored embeddings
+
+Example:
+
+```text
+/api/v1/embeddings/NKLA?limit=10
+/api/v1/embeddings/AAPL?form_type=10-K&section=risk_factors&include_vector=true&limit=5
+```
+
+### `GET /api/v1/embeddings/{ticker}/latest`
+
+Purpose:
+- Return embeddings for only the most recent filing that already has stored embeddings
+- Useful when the client wants the latest chunk text and vectors without first looking up a filing id
+
+Path parameter:
+- `ticker`
+
+Query parameters:
+- `form_type`: optional filing-type filter such as `10-K` or `10-Q`
+- `section`: optional filing-section filter such as `risk_factors` or `mda`
+- `include_vector`: whether to include the numeric embedding vector, default `true`
+- `limit`: max rows to return, default `20`, max `500`
+
+Behavior:
+- Finds the latest filing for the company that already has embedding rows
+- Returns only the embedding rows from that filing
+
+Example:
+
+```text
+/api/v1/embeddings/NKLA/latest?limit=10
+/api/v1/embeddings/AAPL/latest?form_type=10-K&section=mda&include_vector=false&limit=5
+```
+
 Path parameter:
 - `ticker`
 
@@ -313,4 +384,6 @@ Use these routes as the default building blocks:
 - Signal explorer: `GET /api/v1/signals/{ticker}`
 - NCI chart: `GET /api/v1/signals/{ticker}/history`
 - Filing debug page: `GET /api/v1/filings/{ticker}`
+- Embedding explorer: `GET /api/v1/embeddings/{ticker}`
+- Latest embedding explorer: `GET /api/v1/embeddings/{ticker}/latest`
 - Health monitoring: `GET /health`
