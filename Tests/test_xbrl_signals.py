@@ -62,7 +62,7 @@ def company(db_session):
 @pytest.fixture
 def annual_filings(db_session, company):
     filings = []
-    for year in (2022, 2023, 2024, 2025):
+    for year in (2021, 2022, 2023, 2024, 2025):
         filing = Filing(
             company_id=company.id,
             accession_number=f"0000320193-{str(year)[2:]}-0000{year - 2020}",
@@ -82,6 +82,18 @@ def annual_filings(db_session, company):
 @pytest.fixture
 def populated_xbrl_history(db_session, company, annual_filings):
     values_by_year = {
+        2021: {
+            "revenue": 820.0,
+            "gross_profit": 380.0,
+            "operating_income": 180.0,
+            "net_income": 135.0,
+            "assets": 1800.0,
+            "liabilities": 760.0,
+            "cash": 330.0,
+            "long_term_debt": 260.0,
+            "equity": 1040.0,
+            "operating_cash_flow": 195.0,
+        },
         2022: {
             "revenue": 900.0,
             "gross_profit": 430.0,
@@ -179,7 +191,13 @@ def test_compute_xbrl_features_for_filing_builds_expected_numeric_snapshot(
     assert features["debt_to_equity_current"] == pytest.approx(500.0 / 1050.0)
     assert features["cash_ratio_current"] == pytest.approx(320.0 / 2350.0)
     assert features["cf_quality_current"] == pytest.approx(190.0 / 170.0)
+    assert features["cash_conversion_ratio_current"] == pytest.approx(190.0 / 170.0)
+    assert features["accruals_ratio_prior"] == pytest.approx((250.0 - 310.0) / 2200.0)
+    assert features["operating_cash_flow_current"] == pytest.approx(190.0)
+    assert features["net_income_current"] == pytest.approx(170.0)
     assert features["numeric_anomaly_distance"] is not None
+    assert "numeric_anomaly_components" in features
+    assert "gross_margin" in features["numeric_anomaly_components"]
 
 
 def test_compute_xbrl_signals_returns_v2_numeric_signal_families(db_session, populated_xbrl_history):
@@ -198,8 +216,21 @@ def test_compute_xbrl_signals_returns_v2_numeric_signal_families(db_session, pop
     assert by_name["fundamental_deterioration"]["signal_value"] == pytest.approx(0.2810381356, rel=1e-6)
     assert by_name["revenue_growth_deceleration"]["signal_value"] == pytest.approx(0.7222222222, rel=1e-6)
     assert by_name["balance_sheet_stress"]["signal_value"] == pytest.approx(0.2821923922, rel=1e-6)
-    assert by_name["earnings_quality"]["signal_value"] == pytest.approx(0.0)
+    assert by_name["earnings_quality"]["signal_value"] == pytest.approx(0.0296920241, rel=1e-6)
+    assert by_name["earnings_quality"]["detail"]["component_scores"]["accruals_score"] == pytest.approx(0.0)
+    assert by_name["earnings_quality"]["detail"]["component_scores"]["cash_conversion_score"] == pytest.approx(0.0)
+    assert by_name["earnings_quality"]["detail"]["component_scores"]["consistency_score"] == pytest.approx(0.1484601206, rel=1e-6)
     assert 0.0 <= by_name["numeric_anomaly"]["signal_value"] <= 1.0
+
+
+def test_numeric_anomaly_requires_four_prior_periods(db_session, populated_xbrl_history):
+    current = populated_xbrl_history[3]
+
+    signals = compute_xbrl_signals(db_session, filing_id=current.id)
+    by_name = {signal["signal_name"]: signal for signal in signals}
+
+    assert by_name["numeric_anomaly"]["signal_value"] is None
+    assert by_name["numeric_anomaly"]["detail"]["availability_reason"] == "insufficient_numeric_history"
 
 
 def test_compute_and_store_xbrl_signals_upserts_and_marks_filing_scored(

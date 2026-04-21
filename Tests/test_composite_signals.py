@@ -114,7 +114,7 @@ def test_compute_composite_signals_uses_expected_nci_formula(
     signals = compute_composite_signals(db_session, filing_id=sample_filing.id)
     by_name = {signal["signal_name"]: signal for signal in signals}
 
-    expected_divergence = abs(0.90 - (1.0 - 0.80))
+    expected_divergence = abs(0.60 - 0.80)
     expected_nci_raw = (
         0.20 * 0.70
         + 0.08 * 0.40
@@ -123,7 +123,6 @@ def test_compute_composite_signals_uses_expected_nci_formula(
         + 0.07 * 0.30
         + 0.05 * 0.50
         + 0.05 * 0.20
-        + 0.05 * 0.10
         + 0.10 * 0.785
         + 0.10 * 0.65
         + 0.10 * 0.55
@@ -137,14 +136,18 @@ def test_compute_composite_signals_uses_expected_nci_formula(
         "composite_filing_risk",
     }
     assert by_name["narrative_numeric_divergence"]["signal_value"] == pytest.approx(expected_divergence)
+    assert by_name["narrative_numeric_divergence"]["detail"]["tone_basis"] == "forward_pessimism"
+    assert by_name["narrative_numeric_divergence"]["detail"]["forward_pessimism"] == pytest.approx(0.60)
+    assert by_name["narrative_numeric_divergence"]["detail"]["numeric_risk"] == pytest.approx(0.80)
     assert by_name["convergence_signal"]["signal_value"] == pytest.approx(0.20)
     assert by_name["convergence_signal"]["detail"]["tier"] == "full"
     assert by_name["nci_global"]["signal_value"] == pytest.approx(expected_nci)
+    assert by_name["nci_global"]["detail"]["normalization_method"] == "identity"
     assert by_name["composite_filing_risk"]["signal_value"] == pytest.approx(expected_nci)
     assert by_name["composite_filing_risk"]["detail"]["alias_of"] == "nci_global"
 
 
-def test_compute_composite_signals_redistributes_weights_when_inputs_are_missing(db_session, sample_filing):
+def test_compute_composite_signals_with_low_coverage_returns_not_available(db_session, sample_filing):
     upsert_signal_scores(
         db_session,
         [
@@ -158,9 +161,158 @@ def test_compute_composite_signals_redistributes_weights_when_inputs_are_missing
     by_name = {signal["signal_name"]: signal for signal in signals}
 
     assert by_name["narrative_numeric_divergence"]["signal_value"] is None
-    assert by_name["nci_global"]["signal_value"] == pytest.approx(((0.08 * 0.4) + (0.07 * 0.7)) / 0.15)
-    assert by_name["nci_global"]["detail"]["coverage_ratio"] == pytest.approx(0.15)
+    assert by_name["nci_global"]["signal_value"] is None
+    assert by_name["nci_global"]["detail"]["availability_reason"] == "insufficient_signal_coverage"
+    assert by_name["nci_global"]["detail"]["coverage_ratio"] == pytest.approx(2 / 10)
     assert by_name["nci_global"]["detail"]["confidence_label"] == "low"
+    assert by_name["nci_global"]["detail"]["available_signal_count"] == 2
+    assert by_name["nci_global"]["detail"]["missing_critical_layers"] == ["behavior"]
+
+
+def test_compute_composite_signals_carries_forward_recent_missing_inputs(
+    db_session,
+    sample_filing,
+    stored_low_level_signals,
+):
+    previous = Filing(
+        company_id=sample_filing.company_id,
+        accession_number="0000320193-24-000001",
+        form_type="10-Q",
+        filed_at=date(2025, 10, 31),
+        period_of_report=date(2025, 9, 30),
+        raw_s3_key="aapl-2025-q3",
+        is_signal_scored=True,
+    )
+    db_session.add(previous)
+    db_session.flush()
+
+    upsert_signal_scores(
+        db_session,
+        [
+            {
+                "filing_id": sample_filing.id,
+                "company_id": sample_filing.company_id,
+                "signal_name": "market_signal",
+                "signal_value": None,
+                "detail": {
+                    "availability_reason": "missing_market_prices",
+                    "signal_category": "market",
+                    "signal_role": "composite_layer",
+                    "coverage_ratio": 0.0,
+                    "confidence": 0.0,
+                },
+                "model_version": "test",
+            },
+            {
+                "filing_id": sample_filing.id,
+                "company_id": sample_filing.company_id,
+                "signal_name": "sentiment_signal",
+                "signal_value": None,
+                "detail": {
+                    "availability_reason": "missing_news_items",
+                    "signal_category": "sentiment",
+                    "signal_role": "composite_layer",
+                    "coverage_ratio": 0.0,
+                    "confidence": 0.0,
+                },
+                "model_version": "test",
+            },
+            _signal_row(previous, "market_signal", 0.80, kind="market"),
+            _signal_row(previous, "sentiment_signal", 0.50, kind="sentiment"),
+        ],
+    )
+
+    signals = compute_composite_signals(db_session, filing_id=sample_filing.id)
+    by_name = {signal["signal_name"]: signal for signal in signals}
+    nci_detail = by_name["nci_global"]["detail"]
+
+    assert nci_detail["effective_inputs"]["market_signal"] == pytest.approx(0.76)
+    assert nci_detail["effective_inputs"]["sentiment_signal"] == pytest.approx(0.475)
+    assert nci_detail["carried_forward_inputs"]["market_signal"]["source_filing_id"] == previous.id
+    assert nci_detail["carried_forward_inputs"]["market_signal"]["staleness_penalty"] == pytest.approx(0.95)
+    assert nci_detail["carried_forward_inputs"]["sentiment_signal"]["adjusted_value"] == pytest.approx(0.475)
+    assert by_name["convergence_signal"]["detail"]["layer_scores"]["market"] == pytest.approx(0.76)
+
+
+def test_compute_composite_signals_keeps_missing_sentiment_missing(db_session, sample_filing, stored_low_level_signals):
+    upsert_signal_scores(
+        db_session,
+        [
+            {
+                "filing_id": sample_filing.id,
+                "company_id": sample_filing.company_id,
+                "signal_name": "sentiment_signal",
+                "signal_value": None,
+                "detail": {
+                    "availability_reason": "missing_news_items",
+                    "signal_category": "sentiment",
+                    "signal_role": "composite_layer",
+                    "coverage_ratio": 0.0,
+                    "confidence": 0.0,
+                },
+                "model_version": "test",
+            },
+        ],
+    )
+
+    signals = compute_composite_signals(db_session, filing_id=sample_filing.id)
+    by_name = {signal["signal_name"]: signal for signal in signals}
+    nci_detail = by_name["nci_global"]["detail"]
+
+    expected = (
+        (
+            (0.20 * 0.70)
+            + (0.08 * 0.40)
+            + (0.07 * 0.60)
+            + (0.18 * 0.80)
+            + (0.07 * 0.30)
+            + (0.05 * 0.50)
+            + (0.05 * 0.20)
+            + (0.10 * 0.785)
+            + (0.10 * 0.65)
+        )
+        / 0.90
+    ) + 0.15
+
+    assert by_name["nci_global"]["signal_value"] == pytest.approx(expected)
+    assert nci_detail["coverage_ratio"] == pytest.approx(9 / 10)
+    assert "sentiment_signal" not in nci_detail["effective_inputs"]
+    assert nci_detail["missing_signal_names"] == ["sentiment_signal"]
+
+
+def test_compute_composite_signals_downgrades_confidence_when_critical_layer_is_missing(
+    db_session,
+    sample_filing,
+    stored_low_level_signals,
+):
+    upsert_signal_scores(
+        db_session,
+        [
+            {
+                "filing_id": sample_filing.id,
+                "company_id": sample_filing.company_id,
+                "signal_name": "insider_signal",
+                "signal_value": None,
+                "detail": {
+                    "availability_reason": "no_insider_transactions",
+                    "signal_category": "behavior",
+                    "signal_role": "composite_layer",
+                    "coverage_ratio": 0.0,
+                    "confidence": 0.0,
+                },
+                "model_version": "test",
+            },
+        ],
+    )
+
+    signals = compute_composite_signals(db_session, filing_id=sample_filing.id)
+    by_name = {signal["signal_name"]: signal for signal in signals}
+    nci_detail = by_name["nci_global"]["detail"]
+
+    assert by_name["nci_global"]["signal_value"] is not None
+    assert nci_detail["coverage_ratio"] == pytest.approx(9 / 10)
+    assert nci_detail["confidence_label"] == "medium"
+    assert nci_detail["missing_critical_layers"] == ["behavior"]
 
 
 def test_compute_and_store_composite_signals_upserts_nci_and_marks_complete(

@@ -24,17 +24,17 @@ SIGNAL_DEFINITIONS: dict[str, SignalDefinition] = {
     "forward_pessimism": SignalDefinition(
         name="forward_pessimism",
         layer="text",
-        description="Measures whether forward-looking MDA language has shifted toward pessimistic framing versus optimistic framing.",
+        description="FinBERT-based score measuring whether forward-looking management language is skewing negative versus positive.",
     ),
     "text_sentiment": SignalDefinition(
         name="text_sentiment",
         layer="text",
-        description="Auxiliary positive-outlook similarity score derived from current MDA language.",
+        description="Auxiliary FinBERT positive-probability score derived from current MDA and forward-looking language.",
     ),
     "narrative_numeric_divergence": SignalDefinition(
         name="narrative_numeric_divergence",
         layer="composite",
-        description="Diagnostic gap between management optimism in text and underlying numeric health.",
+        description="Diagnostic gap between gap-based management tone and underlying numeric condition.",
     ),
     "fundamental_deterioration": SignalDefinition(
         name="fundamental_deterioration",
@@ -54,7 +54,7 @@ SIGNAL_DEFINITIONS: dict[str, SignalDefinition] = {
     "earnings_quality": SignalDefinition(
         name="earnings_quality",
         layer="numbers",
-        description="Accrual-based warning score for whether reported earnings are backed by cash.",
+        description="Warning score built from accrual pressure, weak cash conversion, and unstable earnings-to-cash consistency.",
     ),
     "numeric_anomaly": SignalDefinition(
         name="numeric_anomaly",

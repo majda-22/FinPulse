@@ -14,15 +14,15 @@ Primary text signals:
 
 - `rlds`: Risk Lexical Drift Score for the Risk Factors section
 - `mda_drift`: drift score for Management Discussion & Analysis
-- `forward_pessimism`: forward-looking MDA tone shifting toward caution or pessimism
-- `text_sentiment`: auxiliary positive-outlook similarity score used for diagnostics and insider amplification
+- `forward_pessimism`: FinBERT-based pessimism score over forward-looking management language
+- `text_sentiment`: auxiliary FinBERT positive-tone score used for diagnostics and insider amplification
 
 Primary numeric signals:
 
 - `fundamental_deterioration`: margin-compression risk score
 - `revenue_growth_deceleration`: slowing-growth risk score
 - `balance_sheet_stress`: leverage, cash, and cash-conversion stress score
-- `earnings_quality`: accrual-based earnings-quality warning score
+- `earnings_quality`: warning score built from accrual pressure, weak cash conversion, and unstable earnings-to-cash consistency
 - `numeric_anomaly`: distance from the company’s own numeric history
 
 Primary behavior signals:
@@ -46,7 +46,7 @@ Primary sentiment signals:
 
 Composite outputs:
 
-- `narrative_numeric_divergence`: diagnostic gap between management optimism and numeric health
+- `narrative_numeric_divergence`: diagnostic gap between gap-based management tone and underlying numeric condition
 - `convergence_signal`: tiered multi-layer convergence boost based on how many layers are elevated
 - `nci_global`: final FinPulse v2 composite score
 - `composite_filing_risk`: backward-compatible alias for `nci_global`
@@ -56,7 +56,13 @@ Compatibility shims remain in the legacy files (`section_signals.py`, `xbrl_sign
 Implementation notes:
 
 - Text comparisons are section-aware: quarterly Risk Factors compare to the latest annual baseline, while quarterly MDA compares to the prior quarter.
+- `forward_pessimism` and `text_sentiment` now use FinBERT (`ProsusAI/finbert`) over MDA / forward-looking paragraphs instead of anchor-embedding similarity, which makes them more discriminative across companies.
 - Numeric signals annualize quarterly duration facts before comparing them with annual filings.
 - Behavioral signals now include a governance penalty for late Form 4 filing behavior.
+- Missing-vs-neutral is explicit: `signal_value = NULL` means the signal could not be computed, while `signal_value = 0.0` means the signal was computed and the result was genuinely neutral.
 - Market and sentiment layers are stored as named signal rows per anchor filing so the composite layer only fuses existing evidence.
+- When a composite input is missing on the current filing, the engine can carry forward the most recent value from the prior two company filings with a light staleness penalty instead of dropping the signal immediately.
+- The composite layer now uses count-based coverage: `coverage_ratio = non_null_inputs / expected_inputs`. If coverage drops below `0.60`, `nci_global` is not produced for that filing.
+- Confidence labels are coverage-gated (`low`, `medium`, `high`) and are further downgraded when a critical core layer is absent, even if supplemental layers are available.
+- `nci_global` now stores both the raw pre-normalization score and the normalization method used so you can audit whether a value came straight from the weighted sum or from the z-score normalization path.
 - `nci_scores` stores the per-layer values, convergence tier, coverage ratio, confidence label, and source filing references used for each anchor computation.

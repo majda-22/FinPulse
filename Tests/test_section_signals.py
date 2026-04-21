@@ -146,6 +146,56 @@ def test_compute_section_drift_signals_uses_rlds_and_mda_drift(
     assert by_name["mda_drift"]["detail"]["comparison_filing_id"] is not None
 
 
+def test_rescale_drift_score_uses_bounded_range():
+    assert text_signals._rescale_drift_score(0.02) == pytest.approx(0.0)
+    assert text_signals._rescale_drift_score(0.25) == pytest.approx(1.0)
+    assert text_signals._rescale_drift_score(0.135) == pytest.approx(0.5)
+
+
+def test_local_tfidf_drift_summary_prefers_sentence_top_k_when_available():
+    summary = text_signals._local_tfidf_drift_summary(
+        (
+            "Demand remained stable across core products. "
+            "Supply chain pressures increased materially in Asia. "
+            "Management expects margin pressure to continue."
+        ),
+        (
+            "Demand remained stable across core products. "
+            "Supply chain conditions improved during the year. "
+            "Management expects gross margins to improve."
+        ),
+    )
+
+    assert summary["aggregation"] == "top_k_sentence_drift"
+    assert summary["unit_basis"] == "sentence"
+    assert summary["top_k_count"] >= 1
+
+
+def test_history_relative_drift_score_only_rises_above_baseline():
+    score, zscore, mean_value, std_value = text_signals._history_relative_drift_score(
+        raw_score=0.12,
+        historical_raw_scores=[0.04, 0.05, 0.06, 0.07],
+    )
+
+    assert score is not None
+    assert score > 0.0
+    assert zscore is not None and zscore > 0.0
+    assert mean_value == pytest.approx(0.055)
+    assert std_value is not None and std_value > 0.0
+
+
+def test_history_relative_drift_score_returns_none_without_enough_history():
+    score, zscore, mean_value, std_value = text_signals._history_relative_drift_score(
+        raw_score=0.12,
+        historical_raw_scores=[0.04, 0.05],
+    )
+
+    assert score is None
+    assert zscore is None
+    assert mean_value is None
+    assert std_value is None
+
+
 def test_compute_section_drift_signals_without_previous_returns_not_available(
     db_session,
     sample_company,
@@ -178,9 +228,35 @@ def test_compute_and_store_section_signals_stores_text_sentiment_and_marks_stage
     monkeypatch,
 ):
     _, current = sample_sections_and_embeddings
-    monkeypatch.setattr(text_signals, "_anchor_embedding", lambda: (1.0, 0.0))
-    monkeypatch.setattr(text_signals, "_optimistic_anchor_embedding", lambda: (1.0, 0.0))
-    monkeypatch.setattr(text_signals, "_pessimistic_anchor_embedding", lambda: (0.0, 1.0))
+    monkeypatch.setattr(
+        text_signals,
+        "_analyze_finbert_text_signals",
+        lambda db, filing_id: {
+            "status": "ok",
+            "reason": None,
+            "paragraph_basis": "mda_and_forward_looking",
+            "paragraph_count": 6,
+            "paragraphs_scored_all": 6,
+            "paragraphs_failed": 0,
+            "avg_positive_all": 0.91,
+            "avg_negative_all": 0.03,
+            "avg_neutral_all": 0.06,
+            "coverage_ratio_all": 1.0,
+            "text_sentiment": 0.91,
+            "forward_paragraph_basis": "forward_looking_subset",
+            "forward_paragraph_count": 3,
+            "paragraphs_scored_forward": 3,
+            "avg_positive_forward": 0.80,
+            "avg_negative_forward": 0.08,
+            "avg_neutral_forward": 0.12,
+            "coverage_ratio_forward": 0.5,
+            "raw_pessimism_forward": -0.72,
+            "forward_pessimism": 0.14,
+            "confidence": 0.95,
+            "sample_scores_all": [],
+            "sample_scores_forward": [],
+        },
+    )
 
     first = compute_and_store_section_signals(current.id, db=db_session)
     second = compute_and_store_section_signals(current.id, db=db_session)
@@ -191,14 +267,47 @@ def test_compute_and_store_section_signals_stores_text_sentiment_and_marks_stage
     assert len(first) == 4
     assert len(second) == 4
     assert set(by_name) == {"rlds", "mda_drift", "text_sentiment", "forward_pessimism"}
-    assert by_name["text_sentiment"].signal_value > 0.85
-    assert by_name["forward_pessimism"].signal_value < 0.20
+    assert by_name["text_sentiment"].signal_value == pytest.approx(0.91)
+    assert by_name["forward_pessimism"].signal_value == pytest.approx(0.14)
     assert current.is_text_signal_scored is True
     assert current.processing_status == "text_signal_scored"
 
 
-def test_upsert_signal_scores_rejects_company_mismatch(db_session, sample_sections_and_embeddings):
+def test_upsert_signal_scores_rejects_company_mismatch(
+    db_session,
+    sample_sections_and_embeddings,
+    monkeypatch,
+):
     _, current = sample_sections_and_embeddings
+    monkeypatch.setattr(
+        text_signals,
+        "_analyze_finbert_text_signals",
+        lambda db, filing_id: {
+            "status": "ok",
+            "reason": None,
+            "paragraph_basis": "mda_and_forward_looking",
+            "paragraph_count": 4,
+            "paragraphs_scored_all": 4,
+            "paragraphs_failed": 0,
+            "avg_positive_all": 0.6,
+            "avg_negative_all": 0.2,
+            "avg_neutral_all": 0.2,
+            "coverage_ratio_all": 1.0,
+            "text_sentiment": 0.6,
+            "forward_paragraph_basis": "forward_looking_subset",
+            "forward_paragraph_count": 2,
+            "paragraphs_scored_forward": 2,
+            "avg_positive_forward": 0.5,
+            "avg_negative_forward": 0.3,
+            "avg_neutral_forward": 0.2,
+            "coverage_ratio_forward": 0.5,
+            "raw_pessimism_forward": -0.2,
+            "forward_pessimism": 0.4,
+            "confidence": 0.9,
+            "sample_scores_all": [],
+            "sample_scores_forward": [],
+        },
+    )
 
     compute_and_store_section_signals(current.id, db=db_session)
     existing = db_session.query(SignalScore).filter_by(

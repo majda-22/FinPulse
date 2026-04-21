@@ -17,7 +17,7 @@ from signals.common import clip01, coverage_ratio, weighted_average
 from signals.policies import SENTIMENT_SIGNAL_WEIGHTS
 from signals.signal_repo import mark_signal_stage, upsert_signal_scores
 
-SENTIMENT_SIGNAL_MODEL_VERSION = "sentiment_signals_v1"
+SENTIMENT_SIGNAL_MODEL_VERSION = "sentiment_signals_v2"
 SENTIMENT_LABEL_SCORES = {
     "positive": 0.5,
     "bullish": 0.5,
@@ -65,6 +65,16 @@ def compute_sentiment_signals(
     ).all()
 
     if not rows:
+        total_company_news = db.scalar(
+            select(NewsItem.id)
+            .where(NewsItem.company_id == filing.company_id)
+            .limit(1)
+        )
+        availability_reason = (
+            "no_news_in_anchor_window"
+            if total_company_news is not None
+            else "missing_news_items"
+        )
         signal_names = (
             "news_sentiment_signal",
             "news_volume_spike",
@@ -75,21 +85,30 @@ def compute_sentiment_signals(
                 filing=filing,
                 signal_name=signal_name,
                 model_version=model_version,
-                availability_reason="missing_news_items",
-                extra_detail={"anchor_datetime": anchor_dt.isoformat()},
+                availability_reason=availability_reason,
+                extra_detail={
+                    "anchor_datetime": anchor_dt.isoformat(),
+                    "window_days": 90,
+                },
             ).to_dict()
             for signal_name in signal_names
         ]
 
     sentiment_value, sentiment_components = _news_sentiment_signal(anchor_dt=anchor_dt, rows=rows)
     volume_value, volume_components = _news_volume_spike(anchor_dt=anchor_dt, rows=rows)
-    combined_value, combined_components = weighted_average(
-        {
-            "news_sentiment_signal": sentiment_value,
-            "news_volume_spike": volume_value,
-        },
-        SENTIMENT_SIGNAL_WEIGHTS,
-    )
+    if sentiment_value is None:
+        combined_value = None
+        combined_components: dict[str, float] = {}
+        if volume_value is not None:
+            combined_components["news_volume_spike"] = volume_value
+    else:
+        combined_value, combined_components = weighted_average(
+            {
+                "news_sentiment_signal": sentiment_value,
+                "news_volume_spike": volume_value,
+            },
+            SENTIMENT_SIGNAL_WEIGHTS,
+        )
 
     payloads = [
         ("news_sentiment_signal", sentiment_value, sentiment_components),
@@ -197,14 +216,22 @@ def _news_sentiment_signal(
     anchor_dt: datetime,
     rows: list[NewsItem],
 ) -> tuple[float | None, dict[str, float]]:
-    sentiment_30d = _weighted_sentiment(anchor_dt=anchor_dt, rows=rows, days=30)
-    sentiment_90d = _weighted_sentiment(anchor_dt=anchor_dt, rows=rows, days=90)
-    if sentiment_30d is None or sentiment_90d is None:
-        return None, {}
+    sentiment_30d, article_count_30d = _weighted_sentiment(anchor_dt=anchor_dt, rows=rows, days=30)
+    sentiment_90d, article_count_90d = _weighted_sentiment(anchor_dt=anchor_dt, rows=rows, days=90)
+    used_90d_fallback = False
+
+    if sentiment_30d is None and sentiment_90d is None:
+        return None, {
+            "scored_articles_30d": float(article_count_30d),
+            "scored_articles_90d": float(article_count_90d),
+        }
+    if sentiment_30d is None and sentiment_90d is not None:
+        sentiment_30d = sentiment_90d
+        used_90d_fallback = True
 
     sentiment_risk_30d = clip01((1.0 - sentiment_30d) / 2.0)
     sentiment_risk_90d = clip01((1.0 - sentiment_90d) / 2.0)
-    deterioration = max(0.0, sentiment_risk_30d - sentiment_risk_90d)
+    deterioration = 0.0 if used_90d_fallback else max(0.0, sentiment_risk_30d - sentiment_risk_90d)
 
     return clip01((0.60 * sentiment_risk_30d) + (0.40 * deterioration)), {
         "recent_sentiment_30d": sentiment_30d,
@@ -212,6 +239,9 @@ def _news_sentiment_signal(
         "sentiment_risk_30d": sentiment_risk_30d,
         "sentiment_risk_90d": sentiment_risk_90d,
         "sentiment_deterioration": deterioration,
+        "scored_articles_30d": float(article_count_30d),
+        "scored_articles_90d": float(article_count_90d),
+        "used_90d_fallback": 1.0 if used_90d_fallback else 0.0,
     }
 
 
@@ -248,10 +278,11 @@ def _weighted_sentiment(
     anchor_dt: datetime,
     rows: list[NewsItem],
     days: int,
-) -> float | None:
+) -> tuple[float | None, int]:
     window_start = anchor_dt - timedelta(days=days)
     scored_values: list[float] = []
     weights: list[float] = []
+    scored_count = 0
 
     for row in rows:
         published_at = _coerce_utc(row.published_at)
@@ -264,10 +295,11 @@ def _weighted_sentiment(
         weight = exp(-days_ago / 15.0)
         scored_values.append(score * weight)
         weights.append(weight)
+        scored_count += 1
 
     if not weights:
-        return None
-    return float(sum(scored_values) / sum(weights))
+        return None, scored_count
+    return float(sum(scored_values) / sum(weights)), scored_count
 
 
 def _extract_sentiment_score(row: NewsItem) -> float | None:

@@ -24,6 +24,7 @@ from ingestion.edgar_client import EdgarClient
 from ingestion.news_client import NewsClient
 from ingestion.news_repo import upsert_news_items
 from processing.news_normalizer import normalize_news_items
+from processing.news_sentiment import enrich_news_items_with_sentiment
 
 logger = logging.getLogger("pipelines.run_news_pipeline")
 
@@ -75,11 +76,17 @@ async def run_news_pipeline(
                 limit=limit,
             )
         normalized_items = normalize_news_items(raw_items)
+        scored_items = enrich_news_items_with_sentiment(normalized_items)
         write_summary = upsert_news_items(
             db,
             company_id=company.id,
             ticker=company.ticker,
-            items=normalized_items,
+            items=scored_items,
+        )
+        sentiment_scored = sum(
+            1
+            for item in scored_items
+            if isinstance(item.get("raw_json"), dict) and item["raw_json"].get("sentiment_score") is not None
         )
 
         duration_ms = int((time.monotonic() - t0) * 1000)
@@ -96,6 +103,7 @@ async def run_news_pipeline(
                 "limit": limit,
                 "fetched": len(raw_items),
                 "normalized": len(normalized_items),
+                "sentiment_scored": sentiment_scored,
                 "inserted": write_summary["inserted"],
                 "updated": write_summary["updated"],
                 "deduped_in_batch": write_summary["deduped_in_batch"],
@@ -109,6 +117,7 @@ async def run_news_pipeline(
             "requested_limit": limit,
             "fetched": len(raw_items),
             "normalized": len(normalized_items),
+            "sentiment_scored": sentiment_scored,
             **write_summary,
             "duration_ms": duration_ms,
         }

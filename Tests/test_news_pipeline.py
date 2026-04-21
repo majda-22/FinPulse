@@ -15,6 +15,7 @@ import app.db.models.pipeline_event
 from app.db.models.company import Company
 from app.db.models.news_item import NewsItem
 from app.db.models.pipeline_event import PipelineEvent
+from pipelines.news_sentiment_backfill import backfill_news_sentiment
 from ingestion.edgar_client import CompanyMeta
 from ingestion.news_repo import upsert_news_items
 from pipelines.run_news_pipeline import run_news_pipeline
@@ -132,9 +133,24 @@ def test_run_news_pipeline_fetches_normalizes_and_logs_event():
         async def fetch_company_news(self, *, ticker, company_name=None, limit=50):
             return raw_items[:limit]
 
+    def _fake_sentiment_enricher(items):
+        enriched = []
+        for item in items:
+            payload = dict(item)
+            payload["sentiment_label"] = "positive"
+            payload["raw_json"] = {
+                **(payload.get("raw_json") or {}),
+                "sentiment_score": 0.42,
+            }
+            enriched.append(payload)
+        return enriched
+
     with patch(
         "pipelines.run_news_pipeline.NewsClient",
         return_value=AsyncNewsClientStub(),
+    ), patch(
+        "pipelines.run_news_pipeline.enrich_news_items_with_sentiment",
+        side_effect=_fake_sentiment_enricher,
     ):
         summary = asyncio.run(
             run_news_pipeline(
@@ -154,7 +170,10 @@ def test_run_news_pipeline_fetches_normalizes_and_logs_event():
     assert summary["normalized"] == 2
     assert summary["deduped_in_batch"] == 1
     assert summary["inserted"] == 1
+    assert summary["sentiment_scored"] == 2
     assert len(rows) == 1
+    assert rows[0].sentiment_label == "positive"
+    assert rows[0].raw_json["sentiment_score"] == 0.42
     assert len(events) == 1
 
     session.close()
@@ -225,5 +244,53 @@ def test_run_news_pipeline_bootstraps_missing_company():
     assert summary["inserted"] == 1
     assert company.cik == "0001731289"
     assert len(rows) == 1
+
+    session.close()
+
+
+def test_backfill_news_sentiment_updates_existing_rows():
+    session = _make_session()
+    company = Company(cik="0000320193", ticker="AAPL", name="Apple Inc.")
+    session.add(company)
+    session.flush()
+
+    row = NewsItem(
+        company_id=company.id,
+        ticker="AAPL",
+        source_name="google_news_rss",
+        publisher="Reuters",
+        headline="Apple launches a new product",
+        summary="Investors react positively.",
+        url="https://example.com/apple-product",
+        published_at=datetime(2026, 4, 18, 11, 0, tzinfo=timezone.utc),
+        dedupe_hash="aapl-news-1",
+        sentiment_label=None,
+        raw_json={"source": "fixture"},
+    )
+    session.add(row)
+    session.flush()
+
+    def _fake_sentiment_enricher(items):
+        enriched = []
+        for item in items:
+            payload = dict(item)
+            payload["sentiment_label"] = "positive"
+            payload["raw_json"] = {
+                **(payload.get("raw_json") or {}),
+                "sentiment_score": 0.33,
+            }
+            enriched.append(payload)
+        return enriched
+
+    with patch(
+        "pipelines.news_sentiment_backfill.enrich_news_items_with_sentiment",
+        side_effect=_fake_sentiment_enricher,
+    ):
+        summary = backfill_news_sentiment(ticker="AAPL", db=session)
+
+    session.refresh(row)
+    assert summary["updated"] == 1
+    assert row.sentiment_label == "positive"
+    assert row.raw_json["sentiment_score"] == 0.33
 
     session.close()

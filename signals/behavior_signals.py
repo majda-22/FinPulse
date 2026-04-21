@@ -17,7 +17,7 @@ from signals.common import clip01, coverage_ratio
 from signals.policies import FORM4_GOVERNANCE_PENALTY_CAP, FORM4_GOVERNANCE_PENALTY_MULTIPLIER
 from signals.signal_repo import mark_signal_stage, upsert_signal_scores
 
-BEHAVIOR_SIGNAL_MODEL_VERSION = "behavior_signals_v2"
+BEHAVIOR_SIGNAL_MODEL_VERSION = "behavior_signals_v3"
 
 
 @dataclass(slots=True)
@@ -50,6 +50,20 @@ def compute_behavior_signals(
         filing_id=filing_id,
         history_limit=history_limit,
     )
+    if int(snapshot.get("transaction_row_count") or 0) == 0:
+        signal_names = ("ita", "insider_concentration", "insider_signal")
+        return [
+            _not_available_behavior_signal(
+                filing=filing,
+                signal_name=signal_name,
+                model_version=model_version,
+                availability_reason="no_insider_transactions",
+                feature_snapshot=snapshot,
+                extra_detail={},
+            ).to_dict()
+            for signal_name in signal_names
+        ]
+
     features = snapshot["features"]
     text_sentiment = _load_text_sentiment(db, filing_id=filing_id)
 
@@ -249,3 +263,34 @@ def _behavior_confidence(*, snapshot: dict[str, Any], component_scores: dict[str
     activity_ratio = clip01(active_insiders / 3.0)
     component_ratio = coverage_ratio(component_scores, expected_count=max(len(component_scores), 1))
     return clip01((0.35 * history_ratio) + (0.35 * activity_ratio) + (0.30 * component_ratio))
+
+
+def _not_available_behavior_signal(
+    *,
+    filing: Filing,
+    signal_name: str,
+    model_version: str,
+    availability_reason: str,
+    feature_snapshot: dict[str, Any],
+    extra_detail: dict[str, Any],
+) -> ComputedBehaviorSignal:
+    definition = get_signal_definition(signal_name)
+    return ComputedBehaviorSignal(
+        filing_id=filing.id,
+        company_id=filing.company_id,
+        signal_name=signal_name,
+        signal_value=None,
+        model_version=model_version,
+        detail={
+            "description": definition.description if definition else "",
+            "availability_reason": availability_reason,
+            "feature_snapshot": feature_snapshot,
+            "coverage_ratio": 0.0,
+            "confidence": 0.0,
+            "history_depth": len(feature_snapshot.get("history_filing_ids", [])),
+            "signal_category": "behavior",
+            "signal_role": "base" if signal_name != "insider_signal" else "composite_layer",
+            "model_version": model_version,
+            **extra_detail,
+        },
+    )

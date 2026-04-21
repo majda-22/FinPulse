@@ -1,15 +1,8 @@
 from __future__ import annotations
 
+CARRY_FORWARD_LOOKBACK_FILINGS = 2
+CARRY_FORWARD_STALENESS_PENALTY = 0.95
 
-POSITIVE_OUTLOOK_ANCHOR = (
-    "The company delivered strong revenue growth and improved profitability."
-)
-OPTIMISTIC_FORWARD_ANCHOR = (
-    "strong growth outlook, confident in results, expect continued improvement"
-)
-PESSIMISTIC_FORWARD_ANCHOR = (
-    "face significant headwinds, uncertain environment, challenges ahead, cannot guarantee"
-)
 FORWARD_LOOKING_KEYWORDS = (
     "expect",
     "expects",
@@ -52,6 +45,11 @@ BALANCE_SHEET_STRESS_WEIGHTS = {
     "cash_score": 0.30,
     "cf_quality_score": 0.35,
 }
+EARNINGS_QUALITY_WEIGHTS = {
+    "accruals_score": 0.45,
+    "cash_conversion_score": 0.35,
+    "consistency_score": 0.20,
+}
 NUMERIC_HISTORY_TARGET = 4
 
 ROUTINE_TRANSACTION_CODES = {"A", "F", "M"}
@@ -70,11 +68,11 @@ FORM4_GOVERNANCE_PENALTY_CAP = 0.30
 FORM4_GOVERNANCE_PENALTY_MULTIPLIER = 0.50
 
 CONVERGENCE_THRESHOLDS = {
-    "text": 0.55,
-    "numeric": 0.55,
-    "behavior": 0.50,
-    "market": 0.50,
-    "sentiment": 0.50,
+    "text": 0.25,
+    "numeric": 0.20,
+    "behavior": 0.15,
+    "market": 0.20,
+    "sentiment": 0.20,
 }
 CONVERGENCE_TIERS = {
     5: ("full", 0.20),
@@ -90,7 +88,7 @@ NCI_WEIGHTS = {
     "balance_sheet_stress": 0.07,
     "revenue_growth_deceleration": 0.05,
     "earnings_quality": 0.05,
-    "numeric_anomaly": 0.05,
+    "numeric_anomaly": 0.00,
     "insider_signal": 0.10,
     "market_signal": 0.10,
     "sentiment_signal": 0.10,
@@ -109,3 +107,17 @@ SENTIMENT_SIGNAL_WEIGHTS = {
 
 NCI_COVERAGE_HIGH = 0.80
 NCI_COVERAGE_MEDIUM = 0.60
+NCI_MIN_REQUIRED_COVERAGE = 0.60
+NCI_NORMALIZATION_HISTORY_MIN_COUNT = 5
+
+NCI_CRITICAL_LAYER_SIGNALS = {
+    "text": ("rlds", "mda_drift", "forward_pessimism"),
+    "numeric": (
+        "fundamental_deterioration",
+        "balance_sheet_stress",
+        "revenue_growth_deceleration",
+        "earnings_quality",
+        "numeric_anomaly",
+    ),
+    "behavior": ("insider_signal",),
+}

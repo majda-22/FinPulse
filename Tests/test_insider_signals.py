@@ -15,6 +15,7 @@ from app.db.models.company import Company
 from app.db.models.filing import Filing
 from app.db.models.pipeline_event import PipelineEvent
 from app.db.models.signal_score import SignalScore
+from signals.behavior_features import _role_name
 from ingestion.insider_repo import upsert_insider_transactions
 from signals.insider_features import compute_insider_features_for_filing
 from signals.insider_signals import compute_and_store_insider_signals, compute_insider_signals
@@ -316,7 +317,7 @@ def test_upsert_insider_transactions_matches_existing_business_key_when_uid_chan
     assert rows[0].transaction_uid == "uid-rerun"
 
 
-def test_compute_insider_signals_without_transactions_returns_zero_scores(
+def test_compute_insider_signals_without_transactions_returns_not_available(
     db_session,
     company,
 ):
@@ -334,4 +335,27 @@ def test_compute_insider_signals_without_transactions_returns_zero_scores(
     signals = compute_insider_signals(db_session, filing_id=filing.id)
 
     assert len(signals) == 3
-    assert all(signal["signal_value"] == pytest.approx(0.0) for signal in signals)
+    assert all(signal["signal_value"] is None for signal in signals)
+    assert all(signal["detail"]["availability_reason"] == "no_insider_transactions" for signal in signals)
+
+
+def test_role_name_does_not_misclassify_senior_vice_president_titles():
+    svp = type(
+        "Txn",
+        (),
+        {
+            "officer_title": "Senior Vice President",
+            "is_director": False,
+        },
+    )()
+    cfo = type(
+        "Txn",
+        (),
+        {
+            "officer_title": "Senior Vice President, CFO",
+            "is_director": False,
+        },
+    )()
+
+    assert _role_name(svp) == "Other Officer"
+    assert _role_name(cfo) == "CFO"

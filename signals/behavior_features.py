@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
+import re
 from statistics import median
 from typing import Any
 
@@ -12,10 +13,18 @@ from app.db.models.filing import Filing
 from app.db.models.insider_transaction import InsiderTransaction
 from signals.policies import ROLE_WEIGHTS, ROUTINE_TRANSACTION_CODES, SENIOR_OPPORTUNISTIC_ROLES
 
-BEHAVIOR_FEATURES_VERSION = "behavior_features_v2"
+BEHAVIOR_FEATURES_VERSION = "behavior_features_v3"
 WINDOW_BEFORE_DAYS = 90
 WINDOW_AFTER_DAYS = 90
 GOVERNANCE_LOOKBACK_DAYS = 365
+COMPENSATION_LINK_WINDOW_DAYS = 7
+COMPENSATION_LINK_CODES = ROUTINE_TRANSACTION_CODES | {"G"}
+PRESIDENT_WORD_PATTERN = re.compile(r"\bpresident\b")
+VICE_PRESIDENT_WORD_PATTERN = re.compile(r"\bvice president\b")
+CEO_WORD_PATTERN = re.compile(r"\bceo\b")
+CFO_WORD_PATTERN = re.compile(r"\bcfo\b")
+CTO_WORD_PATTERN = re.compile(r"\bcto\b")
+COO_WORD_PATTERN = re.compile(r"\bcoo\b")
 
 
 @dataclass(slots=True)
@@ -77,6 +86,7 @@ def compute_behavior_feature_snapshot(
 
     historical_medians = _historical_medians(historical_transactions)
     classified_rows = [_classify_transaction(row, historical_medians) for row in window_transactions]
+    classified_rows = _apply_compensation_linked_sale_routine(classified_rows)
     governance_window_start = filing.filed_at - timedelta(days=GOVERNANCE_LOOKBACK_DAYS)
     governance_rows = [
         row
@@ -151,6 +161,8 @@ def _economic_transactions(rows: list[InsiderTransaction]) -> list[InsiderTransa
 def _historical_medians(rows: list[InsiderTransaction]) -> dict[str, float]:
     sizes_by_insider: dict[str, list[float]] = {}
     for row in rows:
+        if row.transaction_code not in {"S", "P"}:
+            continue
         sizes_by_insider.setdefault(_insider_key(row), []).append(float(row.shares))
     return {
         insider_key: float(median(sizes))
@@ -188,6 +200,7 @@ def _classify_transaction(
 
     return {
         "insider_key": insider_key,
+        "accession_number": row.accession_number,
         "role_name": role_name,
         "role_weight": ROLE_WEIGHTS.get(role_name, ROLE_WEIGHTS["Other Officer"]),
         "classification": classification,
@@ -198,6 +211,31 @@ def _classify_transaction(
         "historical_median_size": median_size,
         "insider_name": row.insider_name,
     }
+
+
+def _apply_compensation_linked_sale_routine(
+    classified_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_insider: dict[str, list[dict[str, Any]]] = {}
+    for row in classified_rows:
+        by_insider.setdefault(row["insider_key"], []).append(row)
+
+    for insider_rows in by_insider.values():
+        insider_rows.sort(key=lambda row: row["transaction_date"])
+        for row in insider_rows:
+            if row["classification"] != "opportunistic_sell":
+                continue
+            current_date = row["transaction_date"]
+            linked_comp_transaction = any(
+                candidate["transaction_code"] in COMPENSATION_LINK_CODES
+                and 0 <= (current_date - candidate["transaction_date"]).days <= COMPENSATION_LINK_WINDOW_DAYS
+                for candidate in insider_rows
+                if candidate is not row
+            )
+            if linked_comp_transaction:
+                row["classification"] = "routine"
+
+    return classified_rows
 
 
 def _active_insiders(classified_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -230,17 +268,17 @@ def _insider_key(row: InsiderTransaction) -> str:
 
 
 def _role_name(row: InsiderTransaction) -> str:
-    title = (row.officer_title or "").lower()
-    if "chief executive officer" in title or title == "ceo":
+    title = " ".join((row.officer_title or "").lower().split())
+    if "chief executive officer" in title or CEO_WORD_PATTERN.search(title):
         return "CEO"
-    if "chief financial officer" in title or title == "cfo":
+    if "chief financial officer" in title or CFO_WORD_PATTERN.search(title):
         return "CFO"
-    if "president" in title:
-        return "President"
-    if "chief technology officer" in title or title == "cto":
+    if "chief technology officer" in title or CTO_WORD_PATTERN.search(title):
         return "CTO"
-    if "chief operating officer" in title or title == "coo":
+    if "chief operating officer" in title or COO_WORD_PATTERN.search(title):
         return "COO"
+    if PRESIDENT_WORD_PATTERN.search(title) and not VICE_PRESIDENT_WORD_PATTERN.search(title):
+        return "President"
     if row.is_director:
         return "Director"
     return "Other Officer"

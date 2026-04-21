@@ -12,10 +12,14 @@ from ingestion.company_repo import log_event
 from signals.catalog import get_signal_definition
 from signals.common import clip01, coverage_ratio, weighted_average
 from signals.numeric_features import compute_numeric_feature_snapshot
-from signals.policies import BALANCE_SHEET_STRESS_WEIGHTS, FUNDAMENTAL_MARGIN_WEIGHTS
+from signals.policies import (
+    BALANCE_SHEET_STRESS_WEIGHTS,
+    EARNINGS_QUALITY_WEIGHTS,
+    FUNDAMENTAL_MARGIN_WEIGHTS,
+)
 from signals.signal_repo import mark_signal_stage, upsert_signal_scores
 
-NUMERIC_SIGNAL_MODEL_VERSION = "numeric_signals_v2"
+NUMERIC_SIGNAL_MODEL_VERSION = "numeric_signals_v4"
 
 
 @dataclass(slots=True)
@@ -236,14 +240,21 @@ def _balance_sheet_stress(features: dict[str, float | None]) -> tuple[float | No
 
 
 def _earnings_quality(features: dict[str, float | None]) -> tuple[float | None, dict[str, float]]:
-    accruals_ratio = features.get("accruals_ratio_current")
-    if accruals_ratio is None:
-        return None, {}
-    score = clip01(max(0.0, accruals_ratio) / 0.10)
-    return score, {"accruals_ratio": accruals_ratio}
+    components = {
+        "accruals_score": _positive_shift_score(features.get("accruals_ratio_current"), cap=0.10),
+        "cash_conversion_score": _cash_conversion_weakness_score(features.get("cash_conversion_ratio_current")),
+        "consistency_score": _earnings_consistency_score(
+            cash_conversion_current=features.get("cash_conversion_ratio_current"),
+            cash_conversion_prior=features.get("cash_conversion_ratio_prior"),
+            accruals_current=features.get("accruals_ratio_current"),
+            accruals_prior=features.get("accruals_ratio_prior"),
+        ),
+    }
+    score, defined = weighted_average(components, EARNINGS_QUALITY_WEIGHTS)
+    return score, defined
 
 
-def _numeric_anomaly(features: dict[str, float | None]) -> tuple[float | None, dict[str, float]]:
+def _numeric_anomaly(features: dict[str, float | None]) -> tuple[float | None, dict[str, Any]]:
     anomaly_distance = features.get("numeric_anomaly_distance")
     if anomaly_distance is None:
         return None, {}
@@ -254,6 +265,9 @@ def _numeric_anomaly(features: dict[str, float | None]) -> tuple[float | None, d
         "revenue_growth_zscore": features.get("revenue_growth_zscore"),
         "debt_to_equity_zscore": features.get("debt_to_equity_zscore"),
         "anomaly_distance": anomaly_distance,
+        "anomaly_metric_count": features.get("numeric_anomaly_metric_count"),
+        "anomaly_history_count": features.get("numeric_anomaly_history_count"),
+        "anomaly_components": features.get("numeric_anomaly_components"),
     }
     return score, {key: value for key, value in component_scores.items() if value is not None}
 
@@ -311,6 +325,45 @@ def _cf_quality_score(cf_quality: float | None) -> float | None:
     if cf_quality is None:
         return None
     return clip01((1.0 - cf_quality) / 1.5)
+
+
+def _cash_conversion_weakness_score(cash_conversion_ratio: float | None) -> float | None:
+    if cash_conversion_ratio is None:
+        return None
+    return clip01(max(0.0, 1.0 - cash_conversion_ratio))
+
+
+def _earnings_consistency_score(
+    *,
+    cash_conversion_current: float | None,
+    cash_conversion_prior: float | None,
+    accruals_current: float | None,
+    accruals_prior: float | None,
+) -> float | None:
+    components = {
+        "cash_conversion_shift": _absolute_shift_score(
+            _delta(cash_conversion_current, cash_conversion_prior),
+            cap=1.0,
+        ),
+        "accruals_shift": _absolute_shift_score(
+            _delta(accruals_current, accruals_prior),
+            cap=0.10,
+        ),
+    }
+    score, _defined = weighted_average(
+        components,
+        {
+            "cash_conversion_shift": 0.60,
+            "accruals_shift": 0.40,
+        },
+    )
+    return score
+
+
+def _absolute_shift_score(value: float | None, *, cap: float) -> float | None:
+    if value is None:
+        return None
+    return clip01(abs(value) / cap)
 
 
 def _delta(current: float | None, previous: float | None) -> float | None:

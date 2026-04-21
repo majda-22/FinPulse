@@ -12,7 +12,12 @@ from sqlalchemy.orm import Session
 from app.db.models.filing import Filing
 from app.db.models.xbrl_fact import XbrlFact
 from signals.common import safe_divide
-from signals.history import ANNUAL_FORMS, QUARTERLY_FORMS, load_comparable_filing_history
+from signals.history import (
+    ANNUAL_FORMS,
+    QUARTERLY_FORMS,
+    infer_fiscal_quarter,
+    load_comparable_filing_history,
+)
 
 
 CANONICAL_FACT_ALIASES: dict[str, tuple[str, ...]] = {
@@ -60,7 +65,9 @@ DURATION_FACTS = {
     "operating_cash_flow",
 }
 
-NUMERIC_FEATURES_VERSION = "numeric_features_v2"
+NUMERIC_FEATURES_VERSION = "numeric_features_v4"
+NUMERIC_ANOMALY_MIN_HISTORY = 4
+NUMERIC_ANOMALY_MIN_STD = 0.001
 
 
 @dataclass(slots=True)
@@ -114,9 +121,14 @@ def compute_numeric_feature_snapshot(
     prior_metrics = metrics_by_filing.get(prior_filing.id, {}) if prior_filing is not None else {}
     two_back_metrics = metrics_by_filing.get(two_back_filing.id, {}) if two_back_filing is not None else {}
 
-    zscores, anomaly_distance = _numeric_anomaly_components(
+    anomaly_history_metrics = _select_anomaly_history_metrics(
+        current_filing=current_filing,
+        history=history[:-1],
+        metrics_by_filing=metrics_by_filing,
+    )
+    zscores, anomaly_distance, anomaly_meta = _numeric_anomaly_components(
         current_metrics=current_metrics,
-        historical_metrics=[metrics_by_filing[row.id] for row in history[:-1]],
+        historical_metrics=anomaly_history_metrics,
     )
 
     features = {
@@ -137,9 +149,20 @@ def compute_numeric_feature_snapshot(
         "cash_ratio_current": current_metrics.get("cash_ratio"),
         "cash_ratio_prior": prior_metrics.get("cash_ratio"),
         "cf_quality_current": current_metrics.get("cf_quality"),
+        "cf_quality_prior": prior_metrics.get("cf_quality"),
+        "cash_conversion_ratio_current": current_metrics.get("cash_conversion_ratio"),
+        "cash_conversion_ratio_prior": prior_metrics.get("cash_conversion_ratio"),
         "accruals_ratio_current": current_metrics.get("accruals_ratio"),
+        "accruals_ratio_prior": prior_metrics.get("accruals_ratio"),
+        "operating_cash_flow_current": current_metrics.get("operating_cash_flow"),
+        "operating_cash_flow_prior": prior_metrics.get("operating_cash_flow"),
+        "net_income_current": current_metrics.get("net_income"),
+        "net_income_prior": prior_metrics.get("net_income"),
         "shares_outstanding_current": current_metrics.get("shares_outstanding"),
         "numeric_anomaly_distance": anomaly_distance,
+        "numeric_anomaly_history_count": anomaly_meta["history_count"],
+        "numeric_anomaly_metric_count": anomaly_meta["metric_count"],
+        "numeric_anomaly_components": anomaly_meta["components"],
         **zscores,
     }
 
@@ -275,6 +298,10 @@ def build_period_metrics(
     if net_income is not None and operating_cash_flow is not None and net_income > 0:
         cf_quality = safe_divide(operating_cash_flow, net_income)
 
+    cash_conversion_ratio = None
+    if net_income is not None and operating_cash_flow is not None and net_income != 0:
+        cash_conversion_ratio = safe_divide(operating_cash_flow, abs(net_income))
+
     accruals_ratio = None
     if net_income is not None and operating_cash_flow is not None:
         accruals_ratio = safe_divide(net_income - operating_cash_flow, assets)
@@ -287,8 +314,11 @@ def build_period_metrics(
         "debt_to_equity": debt_to_equity,
         "cash_ratio": cash_ratio,
         "cf_quality": cf_quality,
+        "cash_conversion_ratio": cash_conversion_ratio,
         "accruals_ratio": accruals_ratio,
+        "operating_cash_flow": operating_cash_flow,
         "net_income": net_income,
+        "assets": assets,
         "shares_outstanding": shares_outstanding,
     }
 
@@ -301,10 +331,22 @@ def _numeric_anomaly_components(
     *,
     current_metrics: dict[str, float | None],
     historical_metrics: list[dict[str, float | None]],
-) -> tuple[dict[str, float | None], float | None]:
+) -> tuple[dict[str, float | None], float | None, dict[str, Any]]:
     metric_names = ("gross_margin", "operating_margin", "revenue_growth", "debt_to_equity")
     zscores: dict[str, float | None] = {}
     distances: list[float] = []
+    history_count = len(historical_metrics)
+    components: dict[str, dict[str, float | int | str | None]] = {}
+
+    if history_count < NUMERIC_ANOMALY_MIN_HISTORY:
+        for metric_name in metric_names:
+            zscores[f"{metric_name}_zscore"] = None
+            components[metric_name] = {
+                "current": current_metrics.get(metric_name),
+                "history_count": history_count,
+                "skipped_reason": "insufficient_history",
+            }
+        return zscores, None, {"history_count": history_count, "metric_count": 0, "components": components}
 
     for metric_name in metric_names:
         current_value = current_metrics.get(metric_name)
@@ -313,24 +355,68 @@ def _numeric_anomaly_components(
             for metrics in historical_metrics
             if metrics.get(metric_name) is not None
         ]
-        if current_value is None or len(series) < 2:
+        if current_value is None or len(series) < NUMERIC_ANOMALY_MIN_HISTORY:
             zscores[f"{metric_name}_zscore"] = None
+            components[metric_name] = {
+                "current": current_value,
+                "history_count": len(series),
+                "skipped_reason": "insufficient_metric_history",
+            }
             continue
 
         historical_mean = float(mean(series))
         historical_std = float(np.std(series))
-        if historical_std == 0.0:
-            zscore = 0.0 if current_value == historical_mean else (3.0 if current_value > historical_mean else -3.0)
-        else:
-            zscore = float((current_value - historical_mean) / historical_std)
+        if historical_std < NUMERIC_ANOMALY_MIN_STD:
+            zscores[f"{metric_name}_zscore"] = None
+            components[metric_name] = {
+                "current": current_value,
+                "history_count": len(series),
+                "historical_mean": historical_mean,
+                "historical_std": historical_std,
+                "skipped_reason": "near_zero_std",
+            }
+            continue
+
+        zscore = float((current_value - historical_mean) / historical_std)
         zscores[f"{metric_name}_zscore"] = zscore
         distances.append(zscore ** 2)
+        components[metric_name] = {
+            "current": current_value,
+            "history_count": len(series),
+            "historical_mean": historical_mean,
+            "historical_std": historical_std,
+            "zscore": zscore,
+        }
 
     anomaly_distance = None
     if distances:
         anomaly_distance = float(np.sqrt(sum(distances) / len(distances)))
 
-    return zscores, anomaly_distance
+    return zscores, anomaly_distance, {"history_count": history_count, "metric_count": len(distances), "components": components}
+
+
+def _select_anomaly_history_metrics(
+    *,
+    current_filing: Filing,
+    history: list[Filing],
+    metrics_by_filing: dict[int, dict[str, float | None]],
+) -> list[dict[str, float | None]]:
+    if current_filing.form_type in ANNUAL_FORMS:
+        comparable_rows = [row for row in history if row.form_type in ANNUAL_FORMS]
+    elif current_filing.form_type in QUARTERLY_FORMS:
+        target_quarter = infer_fiscal_quarter(current_filing)
+        if target_quarter is None:
+            comparable_rows = []
+        else:
+            comparable_rows = [
+                row
+                for row in history
+                if row.form_type in QUARTERLY_FORMS and infer_fiscal_quarter(row) == target_quarter
+            ]
+    else:
+        comparable_rows = [row for row in history if row.form_type == current_filing.form_type]
+
+    return [metrics_by_filing[row.id] for row in comparable_rows if row.id in metrics_by_filing]
 
 
 def _growth(current: float | None, previous: float | None) -> float | None:
