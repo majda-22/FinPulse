@@ -42,8 +42,8 @@ from signals.signal_repo import mark_signal_stage, upsert_signal_scores
 TEXT_SIGNAL_MODEL_VERSION = "text_signals_v4"
 DRIFT_SIGNAL_NAMES = ("rlds", "mda_drift")
 TEXT_SENTIMENT_SECTIONS = ("mda", "forward_looking")
-DRIFT_RESCALING_FLOOR = 0.02
-DRIFT_RESCALING_CAP = 0.25
+DRIFT_RESCALING_FLOOR = 0.01
+DRIFT_RESCALING_CAP = 0.08
 DRIFT_TOPK_RATIO = 0.25
 DRIFT_TOPK_MIN_COUNT = 3
 DRIFT_SENTENCE_MIN_CHARS = 40
@@ -248,6 +248,8 @@ def _build_drift_signal(
     )
 
     raw_rescaled_score = None
+    raw_rescaling_basis = None
+    raw_rescaling_input = None
     history_relative_score = None
     history_zscore = None
     history_mean = None
@@ -256,7 +258,11 @@ def _build_drift_signal(
     scoring_mode = "not_available"
     gap_days = days_between(filing.filed_at, previous_filing.filed_at)
     if raw_score is not None:
-        raw_rescaled_score = _rescale_drift_score(raw_score)
+        raw_rescaling_basis, raw_rescaling_input = _drift_rescaling_input(
+            raw_score=raw_score,
+            semantic_novelty=semantic_novelty,
+        )
+        raw_rescaled_score = _rescale_drift_score(raw_rescaling_input)
         historical_raw_scores = _load_historical_drift_raw_scores(
             db,
             filing=filing,
@@ -298,6 +304,8 @@ def _build_drift_signal(
             "semantic_novelty": semantic_novelty,
             "semantic_summary": semantic_summary,
             "raw_score": raw_score,
+            "raw_rescaling_basis": raw_rescaling_basis,
+            "raw_rescaling_input": raw_rescaling_input,
             "raw_rescaled_score": raw_rescaled_score,
             "history_relative_score": history_relative_score,
             "history_zscore": history_zscore,
@@ -339,6 +347,16 @@ def _rescale_drift_score(raw_score: float) -> float:
         (raw_score - DRIFT_RESCALING_FLOOR)
         / (DRIFT_RESCALING_CAP - DRIFT_RESCALING_FLOOR)
     )
+
+
+def _drift_rescaling_input(
+    *,
+    raw_score: float,
+    semantic_novelty: float | None,
+) -> tuple[str, float]:
+    if semantic_novelty is not None:
+        return "semantic_novelty", float(semantic_novelty)
+    return "raw_score", float(raw_score)
 
 
 def _history_relative_drift_score(

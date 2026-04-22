@@ -37,6 +37,40 @@ XBRL_SUMMARY_FACTS: dict[str, tuple[str, ...]] = {
     "total_assets": CANONICAL_FACT_ALIASES["assets"],
     "total_debt": CANONICAL_FACT_ALIASES["long_term_debt"],
 }
+SCORE_SCALAR_FIELDS = (
+    "companies.name",
+    "companies.ticker",
+    "companies.nci_global",
+    "filings.filed_at",
+    "filings.latest_annual_filed_at",
+    "filings.latest_quarterly_filed_at",
+    "market_prices.price_close",
+    "news_items.sentiment_score",
+)
+
+
+@router.get(
+    "/{ticker}_get_{field_name}",
+    status_code=status.HTTP_200_OK,
+)
+def get_score_scalar_alias(
+    ticker: str,
+    field_name: str,
+    db: Session = Depends(get_db_dependency),
+) -> Any:
+    return _extract_score_scalar(db, ticker=ticker, field_name=field_name)
+
+
+@router.get(
+    "/{ticker}/value/{field_name}",
+    status_code=status.HTTP_200_OK,
+)
+def get_score_scalar(
+    ticker: str,
+    field_name: str,
+    db: Session = Depends(get_db_dependency),
+) -> Any:
+    return _extract_score_scalar(db, ticker=ticker, field_name=field_name)
 
 
 @router.get(
@@ -48,6 +82,10 @@ def get_score(
     ticker: str,
     db: Session = Depends(get_db_dependency),
 ) -> ScoreResponse:
+    return _build_score_response(db, ticker)
+
+
+def _build_score_response(db: Session, ticker: str) -> ScoreResponse:
     company = _get_company_or_404(db, ticker)
 
     latest_annual = _get_latest_filing_snapshot(db, company.id, ("10-K", "10-K/A"))
@@ -100,17 +138,98 @@ def get_score(
     )
 
 
-def _get_company_or_404(db: Session, ticker: str) -> Company:
-    normalized_ticker = ticker.strip().upper()
-    company = db.scalar(
-        select(Company).where(Company.ticker == normalized_ticker)
+def _extract_score_scalar(db: Session, *, ticker: str, field_name: str) -> Any:
+    score_response = _build_score_response(db, ticker)
+    latest_filed_at = _latest_filing_date(
+        score_response.latest_annual_filing,
+        score_response.latest_quarterly_filing,
     )
+
+    resolvers = {
+        "companies.name": lambda: score_response.company_name,
+        "companies.ticker": lambda: score_response.ticker,
+        "companies.nci_global": lambda: score_response.composite_risk_score,
+        "filings.filed_at": lambda: latest_filed_at,
+        "filings.latest_annual_filed_at": lambda: (
+            score_response.latest_annual_filing.filed_at
+            if score_response.latest_annual_filing is not None
+            else None
+        ),
+        "filings.latest_quarterly_filed_at": lambda: (
+            score_response.latest_quarterly_filing.filed_at
+            if score_response.latest_quarterly_filing is not None
+            else None
+        ),
+        "market_prices.price_close": lambda: score_response.market.close_price,
+        "news_items.sentiment_score": lambda: (
+            score_response.recent_news[0].sentiment_score
+            if score_response.recent_news
+            else None
+        ),
+    }
+
+    resolver = resolvers.get(field_name)
+    if resolver is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": f"Unsupported scalar field {field_name!r}",
+                "supported_fields": list(SCORE_SCALAR_FIELDS),
+            },
+        )
+    return resolver()
+
+
+def _get_company_or_404(db: Session, ticker: str) -> Company:
+    identifier = " ".join(ticker.split()).strip()
+    normalized_ticker = identifier.upper()
+    normalized_cik = identifier.zfill(10) if identifier.isdigit() else None
+
+    company = None
+    if normalized_cik is not None:
+        company = db.scalar(
+            select(Company).where(Company.cik == normalized_cik)
+        )
+    if company is None:
+        company = db.scalar(
+            select(Company).where(Company.ticker == normalized_ticker)
+        )
+    if company is None:
+        company = db.scalar(
+            select(Company).where(func.lower(Company.name) == identifier.lower())
+        )
+    if company is None and identifier:
+        partial_matches = db.scalars(
+            select(Company)
+            .where(Company.name.ilike(f"%{identifier}%"))
+            .order_by(Company.name.asc())
+            .limit(2)
+        ).all()
+        if len(partial_matches) == 1:
+            company = partial_matches[0]
+        elif len(partial_matches) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Company identifier {identifier!r} matched multiple companies.",
+                    "candidates": [
+                        {
+                            "name": match.name,
+                            "ticker": match.ticker,
+                            "cik": match.cik,
+                        }
+                        for match in partial_matches
+                    ],
+                },
+            )
+
     if company is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                f"Ticker {normalized_ticker!r} was not found in the database. "
-                "Run the ingestion pipeline for this company first."
+                f"Company identifier {identifier!r} was not found in the database. "
+                "You can use ticker, full company name, or CIK. "
+                "Run the ingestion pipeline for this company first if needed."
             ),
         )
     return company
@@ -343,6 +462,16 @@ def _risk_label(score: float | None) -> str:
     if score < 0.75:
         return "HIGH"
     return "CRITICAL"
+
+
+def _latest_filing_date(
+    latest_annual: FilingSnapshot | None,
+    latest_quarterly: FilingSnapshot | None,
+) -> date | None:
+    return max(
+        [item.filed_at for item in (latest_annual, latest_quarterly) if item is not None],
+        default=None,
+    )
 
 
 def _select_fact_value(rows: list[XbrlFact], aliases: tuple[str, ...]) -> float | None:

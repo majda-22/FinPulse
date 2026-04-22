@@ -68,7 +68,15 @@ async def run_filing_pipeline(
         )
 
     with get_db() as db:
-        company = _resolve_company(db, ticker=normalized_ticker, cik=normalized_cik)
+        try:
+            company = _resolve_company(db, ticker=normalized_ticker, cik=normalized_cik)
+        except RuntimeError as exc:
+            if ingest_summary and ingest_summary.get("error"):
+                raise RuntimeError(
+                    "Filing pipeline bootstrap failed before the company could be stored. "
+                    f"{ingest_summary['error']}"
+                ) from exc
+            raise
         filings = _load_target_filings(
             db,
             company_id=company.id,

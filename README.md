@@ -384,6 +384,147 @@ Useful local URLs:
 - `http://localhost:8000/api/v1/signals/NKLA/history`
 - `http://localhost:8000/docs`
 
+## Teammate Setup From Git Clone + Database Dump
+
+If a teammate is starting from this repo and the provided `finpulse_dump.dump`,
+this is the simplest end-to-end flow.
+
+### 1. Clone the repo
+
+```powershell
+git clone <YOUR_REPO_URL>
+cd PI
+```
+
+### 2. Create the local environment file
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Notes:
+
+- For API-only testing against the restored dump, the default database settings in
+  `.env.example` are enough.
+- `MISTRAL_API_KEY` and `FRED_API_KEY` are only needed if the teammate plans to
+  rerun pipelines that depend on them.
+- `EDGAR_USER_AGENT` should be changed to a real name/email before running SEC
+  ingestion against live endpoints.
+
+### 3. Start the local services
+
+```powershell
+docker compose up -d
+```
+
+This starts:
+
+- PostgreSQL with `pgvector`
+- Redis
+- Adminer
+
+### 4. Restore the provided database dump
+
+Copy the dump into the running PostgreSQL container:
+
+```powershell
+docker cp .\finpulse_dump.dump finpulse_db:/tmp/finpulse_dump.dump
+```
+
+Restore it into the `finpulse` database:
+
+```powershell
+docker exec finpulse_db pg_restore -U finpulse -d finpulse --clean --if-exists --no-owner --no-privileges /tmp/finpulse_dump.dump
+```
+
+Important:
+
+- If using the provided dump, you usually do **not** need to run `alembic upgrade head`
+  right after restore.
+- The dump already contains schema and data.
+- Use Alembic only when building a fresh empty database without the dump.
+
+### 5. Create and activate the Python virtual environment
+
+```powershell
+py -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### 6. Run the API
+
+```powershell
+py -m uvicorn main:app --reload --port 8000
+```
+
+### 7. Verify the API
+
+First checks:
+
+```text
+GET http://localhost:8000/health
+GET http://localhost:8000/api/v1/companies
+GET http://localhost:8000/api/v1/score/NKLA
+GET http://localhost:8000/api/v1/signals/NKLA/history
+GET http://localhost:8000/docs
+```
+
+Good API smoke tests using existing dump data:
+
+- `GET /api/v1/companies`
+- `GET /api/v1/companies/tickers`
+- `GET /api/v1/score/AAPL`
+- `GET /api/v1/score/NKLA`
+- `GET /api/v1/signals/TSLA`
+- `GET /api/v1/filings/NVDA`
+- `GET /api/v1/embeddings/NVDA/latest`
+
+### 8. Optional: verify the database was restored
+
+Open `psql` inside the container:
+
+```powershell
+docker exec -it finpulse_db psql -U finpulse -d finpulse
+```
+
+Then run:
+
+```sql
+SELECT COUNT(*) FROM companies;
+SELECT COUNT(*) FROM filings;
+SELECT COUNT(*) FROM signal_scores;
+SELECT COUNT(*) FROM nci_scores;
+```
+
+### 9. Optional: test pipeline execution through the API
+
+Example background backfill trigger:
+
+```text
+POST http://localhost:8000/api/v1/pipelines/backfill/company
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "identifier": "AAPL",
+  "ten_k_max": 3,
+  "ten_q_max": 4,
+  "form4_max": 20,
+  "news_limit": 50,
+  "run_signals": true
+}
+```
+
+Then poll the returned job id:
+
+```text
+GET /api/v1/pipelines/jobs/{job_id}
+```
+
 ## Typical Workflows
 
 ### Backfill one company end to end

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from math import exp
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -24,9 +23,10 @@ from signals.policies import (
     CONVERGENCE_TIERS,
     NCI_COVERAGE_HIGH,
     NCI_COVERAGE_MEDIUM,
+    NCI_FIXED_MAX_EXPECTED_RAW,
+    NCI_FIXED_MIN_EXPECTED_RAW,
     NCI_CRITICAL_LAYER_SIGNALS,
     NCI_MIN_REQUIRED_COVERAGE,
-    NCI_NORMALIZATION_HISTORY_MIN_COUNT,
     NCI_WEIGHTS,
 )
 from signals.signal_repo import mark_signal_stage, upsert_signal_scores
@@ -491,6 +491,8 @@ def _build_nci_signal(
             "normalization_reference_count": normalization["history_count"],
             "normalization_mean": normalization.get("mean"),
             "normalization_std": normalization.get("std"),
+            "normalization_min_raw": normalization.get("min_raw"),
+            "normalization_max_raw": normalization.get("max_raw"),
             "normalized_score": boosted_score,
             "convergence_tier": convergence.detail.get("tier") if isinstance(convergence.detail, dict) else None,
             "layers_elevated": convergence.detail.get("layers_elevated") if isinstance(convergence.detail, dict) else None,
@@ -764,26 +766,19 @@ def _normalize_nci_value(
         model_version=model_version,
         current_filing_id=current_filing_id,
     )
-    if len(history_raw_scores) >= NCI_NORMALIZATION_HISTORY_MIN_COUNT:
-        mean_value = sum(history_raw_scores) / len(history_raw_scores)
-        variance = sum((score - mean_value) ** 2 for score in history_raw_scores) / len(history_raw_scores)
-        std_value = variance ** 0.5
-        if std_value > 0.0:
-            z_score = (raw_total - mean_value) / std_value
-            return {
-                "value": clip01(1.0 / (1.0 + exp(-z_score))),
-                "method": "zscore_sigmoid",
-                "history_count": len(history_raw_scores),
-                "mean": mean_value,
-                "std": std_value,
-            }
+    raw_span = NCI_FIXED_MAX_EXPECTED_RAW - NCI_FIXED_MIN_EXPECTED_RAW
+    if raw_span <= 0:
+        raise RuntimeError("NCI fixed normalization range must have max > min")
 
+    normalized_value = (raw_total - NCI_FIXED_MIN_EXPECTED_RAW) / raw_span
     return {
-        "value": clip01(raw_total),
-        "method": "identity",
+        "value": clip01(normalized_value),
+        "method": "fixed_range",
         "history_count": len(history_raw_scores),
         "mean": None,
         "std": None,
+        "min_raw": NCI_FIXED_MIN_EXPECTED_RAW,
+        "max_raw": NCI_FIXED_MAX_EXPECTED_RAW,
     }
 
 

@@ -58,6 +58,7 @@ async def ingest_company(
         "ingested": 0,
         "skipped": 0,
         "failed": 0,
+        "error": None,
     }
 
     logger.info("=" * 60)
@@ -80,8 +81,10 @@ async def ingest_company(
                 company_meta.sic_code,
             )
         except Exception as exc:
-            logger.error("Failed to fetch company meta for %s: %s", company_ref, exc)
+            error_message = f"Failed to fetch company meta for {company_ref}: {exc}"
+            logger.error(error_message)
             summary["failed"] += 1
+            summary["error"] = error_message
             return summary
 
         with get_db() as db:
@@ -114,7 +117,8 @@ async def ingest_company(
                     limit=max_filings,
                 )
         except Exception as exc:
-            logger.error("Failed to fetch filings for %s: %s", company_ref, exc)
+            error_message = f"Failed to fetch filings for {company_ref}: {exc}"
+            logger.error(error_message)
             with get_db() as db:
                 log_event(
                     db,
@@ -130,6 +134,7 @@ async def ingest_company(
                     },
                 )
             summary["failed"] += 1
+            summary["error"] = error_message
             return summary
 
         logger.info("Found %d filings for %s", len(filings), summary["identifier"])
@@ -370,4 +375,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

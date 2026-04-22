@@ -1,9 +1,10 @@
 # FinPulse API
 
-This folder contains the read-only HTTP API for FinPulse.
+This folder contains the HTTP API for FinPulse.
 
-The API does not compute new scores on demand. It reads data already written by
-the ingestion, processing, and signal pipelines from the database.
+The API supports both:
+- read endpoints for data already written to PostgreSQL
+- execution endpoints that trigger existing pipelines as background jobs
 
 ## Base URLs
 
@@ -19,6 +20,188 @@ py -m uvicorn main:app --reload --port 8000
 ```
 
 ## Endpoint Summary
+
+### `GET /api/v1/companies`
+
+Purpose:
+- Return company identities currently stored in the database
+- Useful when the client needs names, tickers, and CIKs together
+
+Query parameters:
+- `active_only`: optional boolean filter, default `false`
+- `limit`: max rows to return, default `1000`, max `10000`
+
+Response fields per row:
+- `name`
+- `ticker`
+- `cik`
+- `is_active`
+
+Typical response:
+
+```json
+[
+  {
+    "name": "Apple Inc.",
+    "ticker": "AAPL",
+    "cik": "0000320193",
+    "is_active": true
+  },
+  {
+    "name": "Nikola Corporation",
+    "ticker": "NKLA",
+    "cik": "0001731289",
+    "is_active": true
+  }
+]
+```
+
+### `GET /api/v1/companies/tickers`
+
+Purpose:
+- Return the list of company tickers currently stored in the database
+- Useful for dropdowns, autocomplete, or checking which companies are already ingested
+
+Query parameters:
+- `active_only`: optional boolean filter, default `false`
+- `limit`: max rows to return, default `1000`, max `10000`
+
+Response:
+- plain JSON array of ticker strings
+
+Example:
+
+```text
+/api/v1/companies/tickers
+/api/v1/companies/tickers?active_only=true
+```
+
+Typical response:
+
+```json
+["AAPL", "AMZN", "MSFT", "NKLA", "TSLA"]
+```
+
+### `GET /api/v1/companies/ticker-by-name`
+
+Purpose:
+- Return the ticker for a company name
+- Useful when the client knows the company name but not the ticker yet
+
+Query parameters:
+- `name`: company name to resolve
+
+Behavior:
+- tries a case-insensitive exact match first
+- if there is no exact match, tries a partial name match
+- if multiple partial matches exist, returns a `409` with candidate companies
+
+Examples:
+
+```text
+/api/v1/companies/ticker-by-name?name=Apple%20Inc.
+/api/v1/companies/ticker-by-name?name=Nikola%20Corporation
+```
+
+Typical response:
+
+```json
+"AAPL"
+```
+
+### `POST /api/v1/pipelines/backfill/company`
+
+Purpose:
+- Run the full company backfill workflow through the API
+- This orchestrates filings, Form 4, news, market, macro, and optional signal scoring
+
+Body fields:
+- `identifier`: ticker, full company name, or CIK
+- `ten_k_max`
+- `ten_q_max`
+- `form4_max`
+- `form4_parse_limit`
+- `news_limit`
+- `symbol`
+- `filing_start`
+- `filing_end`
+- `market_start`
+- `market_end`
+- `macro_start`
+- `macro_end`
+- `macro_series`
+- `run_signals`
+
+Behavior:
+- returns `202 Accepted`
+- starts a background job
+- returns a `job_id` and `status_url`
+
+Example:
+
+```json
+POST /api/v1/pipelines/backfill/company
+{
+  "identifier": "NKLA",
+  "ten_k_max": 5,
+  "ten_q_max": 12,
+  "form4_max": 50,
+  "news_limit": 50,
+  "market_start": "2020-01-01",
+  "macro_start": "2015-01-01",
+  "run_signals": true
+}
+```
+
+### `POST /api/v1/pipelines/signals/company`
+
+Purpose:
+- Run the full signal stack for all qualifying filings of one company
+- Useful after fixing signal logic or after re-embedding/reparsing data
+
+Body fields:
+- `identifier`: ticker, full company name, or CIK
+- `form_types`: optional list of filing forms, defaults to `10-K` and `10-Q`
+- `limit`: optional limit on how many filings to process
+
+Behavior:
+- returns `202 Accepted`
+- executes the signal batch in the background
+- current runner support is limited to `10-K` and `10-Q`
+
+### `POST /api/v1/pipelines/signals/filing/{filing_id}`
+
+Purpose:
+- Run the signal pipeline for one specific filing id
+- Useful for targeted debugging and recomputation
+
+Behavior:
+- currently accepts only `10-K` and `10-Q`
+- returns `202 Accepted`
+- stores the result under a background job id
+
+### `GET /api/v1/pipelines/jobs/{job_id}`
+
+Purpose:
+- Poll the current status of a background pipeline job
+
+Response fields:
+- `job_id`
+- `pipeline_name`
+- `status`
+- `submitted_at`
+- `started_at`
+- `finished_at`
+- `status_url`
+- `request`
+- `result`
+- `error`
+
+Typical statuses:
+- `queued`
+- `running`
+- `completed`
+- `failed`
 
 ### `GET /health`
 
@@ -48,7 +231,12 @@ Purpose:
 - This is the best endpoint for a company profile or dashboard card
 
 Path parameter:
-- `ticker`: company ticker, for example `AAPL`, `TSLA`, `NKLA`
+- `ticker`: company identifier
+
+Accepted identifier formats:
+- ticker, for example `AAPL`
+- full company name, for example `Apple Inc.`
+- CIK, for example `0000320193`
 
 Main response fields:
 - `ticker`: normalized company ticker
@@ -181,6 +369,41 @@ Typical use:
 - Latest company risk snapshot
 - Dashboard cards
 
+### `GET /api/v1/score/{ticker}/value/{field_name}`
+
+Purpose:
+- Return only one scalar value from the company score snapshot instead of the full payload
+
+Supported `field_name` values:
+- `companies.name`
+- `companies.ticker`
+- `companies.nci_global`
+- `filings.filed_at`
+- `filings.latest_annual_filed_at`
+- `filings.latest_quarterly_filed_at`
+- `market_prices.price_close`
+- `news_items.sentiment_score`
+
+Example:
+
+```text
+/api/v1/score/NKLA/value/companies.name
+/api/v1/score/NKLA/value/companies.nci_global
+/api/v1/score/NKLA/value/market_prices.price_close
+```
+
+### `GET /api/v1/score/{ticker}_get_{field_name}`
+
+Purpose:
+- Backward-compatible alias for direct scalar access in the compact style you requested
+
+Example:
+
+```text
+/api/v1/score/NKLA_get_companies.name
+/api/v1/score/NKLA_get_companies.nci_global
+```
+
 ### `GET /api/v1/signals/{ticker}`
 
 Purpose:
@@ -188,7 +411,7 @@ Purpose:
 - Useful when you want the raw signal output instead of the aggregated score
 
 Path parameter:
-- `ticker`
+- `ticker`: ticker, full company name, or CIK
 
 Query parameters:
 - `signal_name`: optional exact signal-name filter
@@ -224,7 +447,7 @@ Purpose:
 - Good for charts
 
 Path parameter:
-- `ticker`
+- `ticker`: ticker, full company name, or CIK
 
 Query parameters:
 - `limit`: max history points, default `200`, max `1000`
@@ -265,7 +488,7 @@ Purpose:
 - Useful when you want access to `embeddings.text` and `embeddings.embedding`
 
 Path parameter:
-- `ticker`
+- `ticker`: ticker, full company name, or CIK
 
 Query parameters:
 - `filing_id`: optional filing filter
@@ -310,7 +533,7 @@ Purpose:
 - Useful when the client wants the latest chunk text and vectors without first looking up a filing id
 
 Path parameter:
-- `ticker`
+- `ticker`: ticker, full company name, or CIK
 
 Query parameters:
 - `form_type`: optional filing-type filter such as `10-K` or `10-Q`
@@ -327,6 +550,42 @@ Example:
 ```text
 /api/v1/embeddings/NKLA/latest?limit=10
 /api/v1/embeddings/AAPL/latest?form_type=10-K&section=mda&include_vector=false&limit=5
+```
+
+### `GET /api/v1/embeddings/{ticker}/latest/value/{field_name}`
+
+Purpose:
+- Return only one scalar value from the first matching embedding row of the latest embedded filing
+
+Supported `field_name` values:
+- `embeddings.text`
+- `embeddings.embedding`
+- `filings.filed_at`
+
+Useful query parameters:
+- `section`
+- `form_type`
+- `chunk_idx`
+- `include_vector`
+
+Example:
+
+```text
+/api/v1/embeddings/NKLA/latest/value/embeddings.text
+/api/v1/embeddings/NKLA/latest/value/embeddings.embedding?chunk_idx=0
+/api/v1/embeddings/NKLA/latest/value/filings.filed_at
+```
+
+### `GET /api/v1/embeddings/{ticker}/latest_get_{field_name}`
+
+Purpose:
+- Alias route for compact scalar access on the latest embeddings endpoint
+
+Example:
+
+```text
+/api/v1/embeddings/NKLA/latest_get_embeddings.text
+/api/v1/embeddings/NKLA/latest_get_embeddings.embedding?chunk_idx=0
 ```
 
 Path parameter:
@@ -380,10 +639,19 @@ At a high level:
 ## Recommended Frontend Usage
 
 Use these routes as the default building blocks:
+- Company identity list: `GET /api/v1/companies`
+- Company ticker list: `GET /api/v1/companies/tickers`
+- Company name to ticker lookup: `GET /api/v1/companies/ticker-by-name?name=...`
+- Run a company backfill: `POST /api/v1/pipelines/backfill/company`
+- Run company signals: `POST /api/v1/pipelines/signals/company`
+- Run one filing signal job: `POST /api/v1/pipelines/signals/filing/{filing_id}`
+- Poll a pipeline job: `GET /api/v1/pipelines/jobs/{job_id}`
 - Overview page: `GET /api/v1/score/{ticker}`
+- Scalar overview fields: `GET /api/v1/score/{ticker}/value/{field_name}`
 - Signal explorer: `GET /api/v1/signals/{ticker}`
 - NCI chart: `GET /api/v1/signals/{ticker}/history`
 - Filing debug page: `GET /api/v1/filings/{ticker}`
 - Embedding explorer: `GET /api/v1/embeddings/{ticker}`
 - Latest embedding explorer: `GET /api/v1/embeddings/{ticker}/latest`
+- Latest embedding scalar fields: `GET /api/v1/embeddings/{ticker}/latest/value/{field_name}`
 - Health monitoring: `GET /health`

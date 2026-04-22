@@ -147,9 +147,20 @@ def test_compute_section_drift_signals_uses_rlds_and_mda_drift(
 
 
 def test_rescale_drift_score_uses_bounded_range():
-    assert text_signals._rescale_drift_score(0.02) == pytest.approx(0.0)
-    assert text_signals._rescale_drift_score(0.25) == pytest.approx(1.0)
-    assert text_signals._rescale_drift_score(0.135) == pytest.approx(0.5)
+    assert text_signals._rescale_drift_score(0.01) == pytest.approx(0.0)
+    assert text_signals._rescale_drift_score(0.08) == pytest.approx(1.0)
+    assert text_signals._rescale_drift_score(0.045) == pytest.approx(0.5)
+
+
+def test_drift_rescaling_prefers_semantic_novelty_when_available():
+    basis, value = text_signals._drift_rescaling_input(
+        raw_score=0.017,
+        semantic_novelty=0.028,
+    )
+
+    assert basis == "semantic_novelty"
+    assert value == pytest.approx(0.028)
+    assert text_signals._rescale_drift_score(value) == pytest.approx((0.028 - 0.01) / (0.08 - 0.01))
 
 
 def test_local_tfidf_drift_summary_prefers_sentence_top_k_when_available():

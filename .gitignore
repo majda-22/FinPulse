@@ -26,6 +26,7 @@ htmlcov/
 # Environment and local configuration
 .env
 .env.*
+!.env.example
 
 # Editor and OS noise
 .vscode/
@@ -40,6 +41,7 @@ desktop.ini
 logs/
 data/tmp/
 data/exports/
+finpulse_dump.dump
 
 # Raw ingested source files can become very large
 data/raw/

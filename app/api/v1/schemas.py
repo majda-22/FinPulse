@@ -61,6 +61,13 @@ class NewsItem(BaseModel):
     sentiment_score: float | None
 
 
+class CompanyIdentity(BaseModel):
+    name: str
+    ticker: str
+    cik: str
+    is_active: bool
+
+
 class EmbeddingRow(BaseModel):
     id: int
     filing_id: int
@@ -110,3 +117,48 @@ class HealthResponse(BaseModel):
     status: str
     db: str
     version: str
+
+
+class BackfillCompanyRequest(BaseModel):
+    identifier: str
+    ten_k_max: int = Field(default=3, ge=1, le=50)
+    ten_q_max: int = Field(default=4, ge=1, le=50)
+    form4_max: int = Field(default=20, ge=1, le=500)
+    form4_parse_limit: int = Field(default=20, ge=1, le=500)
+    news_limit: int = Field(default=50, ge=1, le=500)
+    symbol: str | None = None
+    filing_start: date | None = None
+    filing_end: date | None = None
+    market_start: date | None = None
+    market_end: date | None = None
+    macro_start: date | None = None
+    macro_end: date | None = None
+    macro_series: list[str] | None = None
+    run_signals: bool = True
+
+
+class CompanySignalsRunRequest(BaseModel):
+    identifier: str
+    form_types: list[str] = Field(
+        default_factory=lambda: [
+            "10-K",
+            "10-Q",
+        ]
+    )
+    limit: int | None = Field(default=None, ge=1, le=5000)
+
+
+class PipelineJobAcceptedResponse(BaseModel):
+    job_id: str
+    pipeline_name: str
+    status: str
+    submitted_at: datetime
+    status_url: str
+    request: dict[str, Any] = Field(default_factory=dict)
+
+
+class PipelineJobStatusResponse(PipelineJobAcceptedResponse):
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    result: Any | None = None
+    error: str | None = None

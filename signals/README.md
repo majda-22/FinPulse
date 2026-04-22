@@ -64,5 +64,5 @@ Implementation notes:
 - When a composite input is missing on the current filing, the engine can carry forward the most recent value from the prior two company filings with a light staleness penalty instead of dropping the signal immediately.
 - The composite layer now uses count-based coverage: `coverage_ratio = non_null_inputs / expected_inputs`. If coverage drops below `0.60`, `nci_global` is not produced for that filing.
 - Confidence labels are coverage-gated (`low`, `medium`, `high`) and are further downgraded when a critical core layer is absent, even if supplemental layers are available.
-- `nci_global` now stores both the raw pre-normalization score and the normalization method used so you can audit whether a value came straight from the weighted sum or from the z-score normalization path.
+- `nci_global` now stores both the raw pre-normalization score and the normalization method used so you can audit how the final value was mapped into the published 0-1 range.
 - `nci_scores` stores the per-layer values, convergence tier, coverage ratio, confidence label, and source filing references used for each anchor computation.

@@ -127,7 +127,7 @@ def test_compute_composite_signals_uses_expected_nci_formula(
         + 0.10 * 0.65
         + 0.10 * 0.55
     )
-    expected_nci = min(1.0, expected_nci_raw + 0.20)
+    expected_nci = 1.0
 
     assert set(by_name) == {
         "narrative_numeric_divergence",
@@ -142,7 +142,8 @@ def test_compute_composite_signals_uses_expected_nci_formula(
     assert by_name["convergence_signal"]["signal_value"] == pytest.approx(0.20)
     assert by_name["convergence_signal"]["detail"]["tier"] == "full"
     assert by_name["nci_global"]["signal_value"] == pytest.approx(expected_nci)
-    assert by_name["nci_global"]["detail"]["normalization_method"] == "identity"
+    assert by_name["nci_global"]["detail"]["raw_total_before_normalization"] == pytest.approx(expected_nci_raw + 0.20)
+    assert by_name["nci_global"]["detail"]["normalization_method"] == "fixed_range"
     assert by_name["composite_filing_risk"]["signal_value"] == pytest.approx(expected_nci)
     assert by_name["composite_filing_risk"]["detail"]["alias_of"] == "nci_global"
 
@@ -259,7 +260,7 @@ def test_compute_composite_signals_keeps_missing_sentiment_missing(db_session, s
     by_name = {signal["signal_name"]: signal for signal in signals}
     nci_detail = by_name["nci_global"]["detail"]
 
-    expected = (
+    raw_total = (
         (
             (0.20 * 0.70)
             + (0.08 * 0.40)
@@ -273,11 +274,57 @@ def test_compute_composite_signals_keeps_missing_sentiment_missing(db_session, s
         )
         / 0.90
     ) + 0.15
+    expected = 1.0
 
     assert by_name["nci_global"]["signal_value"] == pytest.approx(expected)
+    assert nci_detail["raw_total_before_normalization"] == pytest.approx(raw_total)
     assert nci_detail["coverage_ratio"] == pytest.approx(9 / 10)
     assert "sentiment_signal" not in nci_detail["effective_inputs"]
     assert nci_detail["missing_signal_names"] == ["sentiment_signal"]
+
+
+def test_compute_composite_signals_uses_fixed_range_normalization_for_midrange_scores(
+    db_session,
+    sample_filing,
+):
+    upsert_signal_scores(
+        db_session,
+        [
+            _signal_row(sample_filing, "rlds", 0.15, kind="text"),
+            _signal_row(sample_filing, "mda_drift", 0.10, kind="text"),
+            _signal_row(sample_filing, "forward_pessimism", 0.12, kind="text"),
+            _signal_row(sample_filing, "fundamental_deterioration", 0.18, kind="numbers"),
+            _signal_row(sample_filing, "balance_sheet_stress", 0.10, kind="numbers"),
+            _signal_row(sample_filing, "revenue_growth_deceleration", 0.08, kind="numbers"),
+            _signal_row(sample_filing, "earnings_quality", 0.05, kind="numbers"),
+            _signal_row(sample_filing, "insider_signal", 0.05, kind="behavior"),
+            _signal_row(sample_filing, "market_signal", 0.12, kind="market"),
+            _signal_row(sample_filing, "sentiment_signal", 0.10, kind="sentiment"),
+        ],
+    )
+
+    signals = compute_composite_signals(db_session, filing_id=sample_filing.id)
+    by_name = {signal["signal_name"]: signal for signal in signals}
+    nci_detail = by_name["nci_global"]["detail"]
+
+    raw_total = (
+        (0.20 * 0.15)
+        + (0.08 * 0.10)
+        + (0.07 * 0.12)
+        + (0.18 * 0.18)
+        + (0.07 * 0.10)
+        + (0.05 * 0.08)
+        + (0.05 * 0.05)
+        + (0.10 * 0.05)
+        + (0.10 * 0.12)
+        + (0.10 * 0.10)
+    )
+    expected = (raw_total - 0.04) / (0.35 - 0.04)
+
+    assert by_name["convergence_signal"]["signal_value"] == pytest.approx(0.0)
+    assert nci_detail["raw_total_before_normalization"] == pytest.approx(raw_total)
+    assert nci_detail["normalization_method"] == "fixed_range"
+    assert by_name["nci_global"]["signal_value"] == pytest.approx(expected)
 
 
 def test_compute_composite_signals_downgrades_confidence_when_critical_layer_is_missing(
