@@ -1,6 +1,5 @@
 package net.omaima.entities;
 
-
 import jakarta.persistence.*;
 import jdk.jfr.DataAmount;
 import lombok.*;
