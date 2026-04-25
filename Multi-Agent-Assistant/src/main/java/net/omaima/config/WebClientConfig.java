@@ -1,5 +1,5 @@
 package net.omaima.config;
-
+//pour appeler l api d ingestion de donnees
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
