@@ -24,7 +24,7 @@ public class IngestionPipelineService {
 
     @Cacheable(value = "companyNames", key = "#ticker")
     public String getCompanyName(String ticker) {
-        log.info("Agent 1: Fetching company name for {}", ticker);
+        log.info("1- Fetching company name for {}", ticker);
         try {
             String response = webClient.get()
                     .uri("/api/v1/score/{ticker}/value/companies.name", ticker)
@@ -42,7 +42,7 @@ public class IngestionPipelineService {
 
     @Cacheable(value = "nciGlobal", key = "#ticker")
     public Double getNciGlobal(String ticker) {
-        log.info("Agent 2: Fetching NCI Global for {}", ticker);
+        log.info("2- Fetching NCI Global for {}", ticker);
         try {
             String response = webClient.get()
                     .uri("/api/v1/score/{ticker}/value/companies.nci_global", ticker)
@@ -60,7 +60,7 @@ public class IngestionPipelineService {
 
     @Cacheable(value = "embeddingTexts", key = "#ticker + '-' + #chunkIdx")
     public String getLatestEmbeddingText(String ticker, int chunkIdx) {
-        log.info("Agent 3: Fetching embedding text for {}", ticker);
+        log.info("3- Fetching embedding text for {}", ticker);
         try {
             String response = webClient.get()
                     .uri("/api/v1/embeddings/{ticker}/latest/value/embeddings.text", ticker)
@@ -78,7 +78,7 @@ public class IngestionPipelineService {
 
     @Cacheable(value = "filedAt", key = "#ticker")
     public String getLatestEmbeddingFiledAt(String ticker) {
-        log.info("Agent 4: Fetching filed_at for {}", ticker);
+        log.info("4- Fetching filed_at for {}", ticker);
         try {
             String response = webClient.get()
                     .uri("/api/v1/score/{ticker}/value/filings.filed_at", ticker)
@@ -96,7 +96,7 @@ public class IngestionPipelineService {
 
     @Cacheable(value = "priceClose", key = "#ticker")
     public Double getPriceClose(String ticker) {
-        log.info("Agent 8: Fetching price for {}", ticker);
+        log.info("5- Fetching price for {}", ticker);
         try {
             String response = webClient.get()
                     .uri("/api/v1/score/{ticker}/value/market_prices.price_close", ticker)
@@ -114,7 +114,7 @@ public class IngestionPipelineService {
 
     @Cacheable(value = "sentimentScore", key = "#ticker")
     public Double getSentimentScore(String ticker) {
-        log.info("Agent 8: Fetching sentiment for {}", ticker);
+        log.info("6- Fetching sentiment for {}", ticker);
         try {
             String response = webClient.get()
                     .uri("/api/v1/score/{ticker}/value/news_items.sentiment_score", ticker)
