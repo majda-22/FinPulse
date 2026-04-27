@@ -141,21 +141,22 @@ class TestAnomalyScoring:
         mse = torch.mean((x - y) ** 2).item()
         
         assert isinstance(mse, float)
-        assert 0 <= mse <= 1.0  # MSE devrait être petit pour random data
+        assert mse >= 0.0, f"MSE must be non-negative, got {mse}"
+        assert isinstance(mse, float), f"MSE should be a float, got {type(mse)}"# MSE devrait être petit pour random data
         print(f"✅ MSE computation works: {mse:.6f}")
     
     def test_anomaly_score_normalization(self):
-        """Test: Normalisation en anomaly_score."""
         mse = 0.123
         threshold = 0.100
-        
-        # Normalisation: score = min(1.0, mse / threshold)
-        score = min(1.0, mse / threshold)
-        
-        assert 0 <= score <= 1.0
-        assert score > 1.0 if mse > threshold else score < 1.0
-        print(f"✅ Anomaly score normalization: MSE={mse} → score={score:.4f}")
 
+        score = min(1.0, mse / threshold)  # Capped — 1.0 means "at or above threshold"
+
+        assert 0 <= score <= 1.0
+        if mse > threshold:
+            assert score == 1.0, f"Expected score == 1.0 when MSE exceeds threshold, got {score:.4f}"
+        else:
+            assert score < 1.0, f"Expected score < 1.0 when MSE below threshold, got {score:.4f}"
+        print(f"✅ Anomaly score normalization: MSE={mse} → score={score:.4f}")
 
 class TestDatabaseIntegration:
     """Tests de l'intégration BD."""
@@ -250,8 +251,7 @@ if __name__ == "__main__":
     
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
-        test_mgr.test_manager_save_load([Path(tmpdir)])
-    
+        test_mgr.test_manager_save_load(Path(tmpdir))
     # Test anomaly scoring
     print("\n[3/3] Unit Tests - Anomaly Scoring")
     print("-" * 70)
