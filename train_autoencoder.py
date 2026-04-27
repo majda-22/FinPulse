@@ -9,7 +9,6 @@ Utilisation:
     python train_autoencoder.py --sector 7372            # Secteur spécifique
     python train_autoencoder.py --sector 7372 3721       # Multiple secteurs
 """
-
 import argparse
 import sys
 from datetime import datetime
