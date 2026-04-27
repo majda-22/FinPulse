@@ -12,7 +12,6 @@ Utilisation:
     python score_embeddings.py --recent 10               # 10 derniers filings
     python score_embeddings.py --batch 50                # Process 50 filings par batch
 """
-
 import argparse
 import sys
 from datetime import datetime
