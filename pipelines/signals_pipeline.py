@@ -23,6 +23,7 @@ from signals.composite_signals import compute_and_store_composite_signals
 from signals.insider_signals import compute_and_store_insider_signals
 from signals.market_signals import compute_and_store_market_signals
 from signals.section_signals import compute_and_store_section_signals
+from signals.sector_autoencoder import compute_embeddings_anomaly_scores
 from signals.sentiment_signals import compute_and_store_sentiment_signals
 from signals.xbrl_signals import compute_and_store_xbrl_signals
 
@@ -105,6 +106,23 @@ def run_all_signals(
         raise
 
 
+def _run_autoencoder_stage(*, filing_id: int, db: Session) -> StageRunSummary:
+    try:
+        compute_embeddings_anomaly_scores(db, filing_id, commit=False)
+        logger.info("Autoencoder embeddings scored for filing %d", filing_id)
+        status = "scored"
+    except Exception as exc:
+        logger.warning("Autoencoder stage skipped for filing %d: %s", filing_id, exc)
+        status = "skipped"
+    return StageRunSummary(
+        stage="autoencoder",
+        signal_count=0,
+        signal_names=[],
+        not_available=[],
+        processing_status=status,
+    )
+
+
 def _run_all_signals_inner(
     *,
     filing_id: int,
@@ -129,6 +147,9 @@ def _run_all_signals_inner(
     )
 
     stage_summaries: list[dict[str, Any]] = []
+
+    # ÉTAPE 1: scorer les embeddings avant les signal stages
+    stage_summaries.append(_run_autoencoder_stage(filing_id=filing.id, db=db).to_dict())
 
     for stage_name, runner in SIGNAL_STAGES:
         logger.info("Running %s signals for filing %d", stage_name, filing.id)

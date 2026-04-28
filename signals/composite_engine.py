@@ -128,6 +128,13 @@ def compute_composite_signals(
         model_version=model_version,
         signal_values=signal_values,
     )
+
+    triplet_convergence = _build_triplet_convergence_signal(
+            filing=filing,
+            model_version=model_version,
+            signal_values=signal_values,
+        )
+
     nci_global = _build_nci_signal(
         db=db,
         filing=filing,
@@ -147,6 +154,7 @@ def compute_composite_signals(
     return [
         divergence.to_dict(),
         convergence.to_dict(),
+        triplet_convergence.to_dict(),
         nci_global.to_dict(),
         composite_alias.to_dict(),
     ]
@@ -342,7 +350,90 @@ def _build_convergence_signal(
             "model_version": model_version,
         },
     )
+def _build_triplet_convergence_signal(
+    *,
+    filing: Filing,
+    model_version: str,
+    signal_values: dict[str, float | None],
+) -> ComputedCompositeSignal:
+    """
+    Surveille la convergence spécifique de 3 signaux clés:
+    RLDS (texte) + forward_pessimism (guidance) + insider_signal (insiders).
 
+    Quand les 3 sont élevés en même temps → boost de risque maximal.
+    """
+    definition = get_signal_definition("triplet_convergence_signal")
+
+    # ── Extraire les 3 signaux ──
+    rlds = signal_values.get("rlds")
+    forward_pessimism = signal_values.get("forward_pessimism")
+    insider_signal = signal_values.get("insider_signal")
+
+    # ── Seuils ──
+    rlds_threshold = 0.25
+    forward_pessimism_threshold = 0.25
+    insider_threshold = 0.15
+
+    # ── Vérifier lesquels sont élevés ──
+    rlds_elevated = rlds is not None and rlds >= rlds_threshold
+    pessimism_elevated = forward_pessimism is not None and forward_pessimism >= forward_pessimism_threshold
+    insider_elevated = insider_signal is not None and insider_signal >= insider_threshold
+
+    # ── Compter ──
+    count = sum([rlds_elevated, pessimism_elevated, insider_elevated])
+
+    # ── Calculer le boost ──
+    if count == 3:
+        triplet_boost = 0.25
+        triplet_confidence = "full"
+    elif count == 2:
+        triplet_boost = 0.15
+        triplet_confidence = "strong"
+    elif count == 1:
+        triplet_boost = 0.0
+        triplet_confidence = "weak"
+    else:
+        triplet_boost = 0.0
+        triplet_confidence = "none"
+
+    # ── Construire le résultat ──
+    return ComputedCompositeSignal(
+        filing_id=filing.id,
+        company_id=filing.company_id,
+        signal_name="triplet_convergence_signal",
+        signal_value=triplet_boost,
+        model_version=model_version,
+        detail={
+            "description": definition.description if definition else "Triplet convergence signal",
+            "signal_values": {
+                "rlds": rlds,
+                "forward_pessimism": forward_pessimism,
+                "insider_signal": insider_signal,
+            },
+            "thresholds": {
+                "rlds": rlds_threshold,
+                "forward_pessimism": forward_pessimism_threshold,
+                "insider_signal": insider_threshold,
+            },
+            "elevated_status": {
+                "rlds": rlds_elevated,
+                "forward_pessimism": pessimism_elevated,
+                "insider_signal": insider_elevated,
+            },
+            "triplet_signals_elevated": count,
+            "triplet_confidence": triplet_confidence,
+            "triplet_boost": triplet_boost,
+            "interpretation": {
+                "full": "Convergence maximale: anomalie texte + pessimisme guidance + ventes insiders",
+                "strong": "Convergence forte: 2 des 3 indicateurs présents",
+                "weak": "Convergence faible: 1 seul indicateur présent",
+                "none": "Aucune convergence: aucun indicateur élevé",
+            }[triplet_confidence],
+            "signal_category": "composite",
+            "signal_role": "derived",
+            "model_version": model_version,
+        },
+    )
 
 def _build_nci_signal(
     *,
