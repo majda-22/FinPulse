@@ -126,6 +126,11 @@ SIGNAL_DEFINITIONS: dict[str, SignalDefinition] = {
         layer="composite",
         description="Backward-compatible alias for nci_global.",
     ),
+    "triplet_convergence_signal": SignalDefinition(
+            name="triplet_convergence_signal",
+            layer="composite",
+            description="Convergence ciblée de RLDS (texte), forward_pessimism (guidance), et insider_signal (insiders). Boost de risque quand 2+ signaux sont élevés.",
+        ),
 }
 
 
