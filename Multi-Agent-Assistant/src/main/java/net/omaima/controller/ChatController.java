@@ -42,7 +42,6 @@ public class ChatController {
             String token = authHeader.replace("Bearer ", "");
             User user = jwtTokenProvider.getUserFromToken(token);
 
-            // ✅ Un seul appel — l'orchestrateur décide du mode
             MultiAgentOrchestrator.OrchestratorResult result =
                     orchestrator.handleMessage(user, request.ticker(), request.message());
 
@@ -94,7 +93,7 @@ public class ChatController {
             boolean exists = orchestrator.checkIfCompanyExists(ticker);
 
             if (!exists) {
-                // ✅ Le backfill est déclenché ici explicitement, pas dans l'orchestrateur
+                //Le backfill est déclenché ici explicitement, pas dans l'orchestrateur
                 // L'utilisateur est informé que c'est en cours
                 return ResponseEntity.ok(new CompanyCheckResponse(
                         false,

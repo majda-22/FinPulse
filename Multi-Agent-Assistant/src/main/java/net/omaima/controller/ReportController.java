@@ -40,7 +40,7 @@ public class ReportController {
             String token = authHeader.replace("Bearer ", "");
             User user = jwtTokenProvider.getUserFromToken(token);
 
-            // ✅ Filtré par user.getId()
+            //Filtré par user.getId()
             List<StrategyDTO> dtos = strategyService
                     .getActiveStrategiesByUser(user.getId())
                     .stream()

@@ -229,9 +229,6 @@ public class MultiAgentOrchestrator {
         }
     }
 
-    // =====================================================================
-    // UTILITAIRES
-    // =====================================================================
 
     public boolean checkIfCompanyExists(String ticker) {
         try {
@@ -241,10 +238,6 @@ public class MultiAgentOrchestrator {
             return false;
         }
     }
-
-    // =====================================================================
-    // TYPES
-    // =====================================================================
 
     public enum Mode { CHATBOT, REPORT, OUT_OF_SCOPE, NEEDS_CLARIFICATION }
 
