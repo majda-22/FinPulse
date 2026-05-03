@@ -67,7 +67,7 @@ public class ReportController {
             String token = authHeader.replace("Bearer ", "");
             User user = jwtTokenProvider.getUserFromToken(token);
 
-            // ✅ Vérifier que la stratégie appartient bien à cet user
+            //Vérifier que la stratégie appartient bien à cet user
             boolean owned = strategyService.getActiveStrategiesByUser(user.getId())
                     .stream().anyMatch(s -> s.getId().equals(strategyId));
 
