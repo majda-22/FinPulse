@@ -20,6 +20,7 @@ import java.util.List;
  * - Validation des valeurs numériques en sortie
  * - Interdiction d'inventer des risques non présents dans le SEC
  */
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -42,13 +43,13 @@ public class Agent2RedFlagsExtractor {
             String prompt = String.format("""
                 Tu es un analyste de risque financier senior. Ta mission est d'identifier
                 dans le texte SEC les facteurs de risque qui CONTREDISENT l'argument suivant.
- 
+
                 ARGUMENT DE L'UTILISATEUR: %s
                 SCORE NCI GLOBAL DE RÉFÉRENCE: %.2f
- 
+
                 TEXTE SEC (source officielle):
                 %s
- 
+
                 RÈGLES STRICTES:
                 - Extrait UNIQUEMENT des risques présents dans le texte SEC ci-dessus (Item 1A ou équivalent)
                 - NE PAS inventer de risques absents du document
@@ -60,7 +61,7 @@ public class Agent2RedFlagsExtractor {
                 - Formule NCI personnalisé: nci_personalized = %.2f + (f_consistency × 20)
                   (Un NCI plus élevé = moins fiable pour cet argument spécifique)
                 - analysis_summary : 2-3 phrases résumant l'analyse de risque
- 
+
                 Réponds UNIQUEMENT en JSON valide, sans texte avant ou après:
                 {
                   "red_flags": ["Risque factuel 1", "Risque factuel 2"],
@@ -99,7 +100,7 @@ public class Agent2RedFlagsExtractor {
                     }
                 }
 
-                // ✅ Validation des valeurs numériques
+                //Validation des valeurs numériques
                 double fConsistency = node.has("f_consistency")
                         ? clamp(node.get("f_consistency").asDouble(), 0.0, 1.0)
                         : 0.0;

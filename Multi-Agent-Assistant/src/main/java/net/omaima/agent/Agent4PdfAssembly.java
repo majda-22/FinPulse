@@ -15,7 +15,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
- * Renommé : Agent9PdfAssembly → Agent4PdfAssembly
  * Pas de LLM — uniquement iText7 pour générer le PDF.
  */
 @Service

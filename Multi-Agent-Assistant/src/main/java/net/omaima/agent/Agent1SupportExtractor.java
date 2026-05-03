@@ -14,14 +14,15 @@ import java.util.List;
 
 /**
  *
- * Rôle : extraire du rapport SEC les points factuels qui SOUTIENNENT
+ * Role : extraire du rapport SEC les points factuels qui SOUTIENNENT
  * l'argument d'investissement de l'utilisateur.
  *
- * Corrections apportées :
+ * features :
  * - Prompt plus strict : interdit les inventions
  * - Limite à 5 points maximum pour rester factuel
  * - Demande la citation de la source SEC exacte
  */
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -37,20 +38,20 @@ public class Agent1SupportExtractor {
             String prompt = String.format("""
                 Tu es un analyste financier senior. Ta mission est d'extraire du texte SEC
                 les éléments FACTUELS qui soutiennent l'argument d'investissement suivant.
- 
+
                 ARGUMENT DE L'UTILISATEUR: %s
                 ENTREPRISE: %s
- 
+
                 TEXTE SEC (source officielle):
                 %s
- 
+
                 RÈGLES STRICTES:
                 - Extrait UNIQUEMENT des faits présents dans le texte SEC ci-dessus
                 - NE PAS inventer, extrapoler ou supposer
                 - Si aucun élément ne soutient l'argument, retourne une liste vide
                 - Maximum 5 points, chacun avec une citation courte du texte source
                 - Chaque point doit être une phrase complète et factuelle
- 
+
                 Réponds UNIQUEMENT en JSON valide, sans texte avant ou après:
                 {
                   "support_points": [

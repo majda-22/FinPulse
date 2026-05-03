@@ -12,17 +12,18 @@ import java.util.List;
  *
  On tente l'appel IngestionPipelineService et log clairement si indisponible.
  */
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class Agent5MarketNews {
 
-    private final IngestionPipelineService ingestionPipelineService;
+    private final IngestionPipelineService p1ApiService;
 
     public Double getPriceClose(String ticker) {
         log.info("Agent5 (MarketNews): Prix de clôture pour {}", ticker);
         try {
-            return ingestionPipelineService.getPriceClose(ticker);
+            return p1ApiService.getPriceClose(ticker);
         } catch (Exception e) {
             log.warn("Agent5: Prix indisponible pour {}", ticker);
             return null;
@@ -32,7 +33,7 @@ public class Agent5MarketNews {
     public Double getSentimentScore(String ticker) {
         log.info("Agent5 (MarketNews): Sentiment pour {}", ticker);
         try {
-            return ingestionPipelineService.getSentimentScore(ticker);
+            return p1ApiService.getSentimentScore(ticker);
         } catch (Exception e) {
             log.warn("Agent5: Sentiment indisponible pour {}", ticker);
             return 0.0;
@@ -40,7 +41,6 @@ public class Agent5MarketNews {
     }
 
     /**
-     * ✅ CORRECTION : n'était pas implémentée (retournait toujours []).
      * Tente via P1ApiService — si P1 ne l'expose pas encore,
      * retourne une liste vide proprement avec un log clair.
      */
@@ -57,7 +57,5 @@ public class Agent5MarketNews {
         }
     }
 
-    public record PricePoint(String date, Double price) {
-    }
-
+    public record PricePoint(String date, Double price) {}
 }
