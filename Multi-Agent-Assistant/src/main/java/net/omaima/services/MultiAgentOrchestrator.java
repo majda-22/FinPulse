@@ -68,7 +68,7 @@ public class MultiAgentOrchestrator {
     }
 
     // =====================================================================
-    // DÉTECTION D'INTENTION VIA LLM
+    // DÉTECTION D'INTENTION
     // =====================================================================
 
     private IntentResult detectIntentWithLLM(String message, String ticker) {
@@ -215,7 +215,7 @@ public class MultiAgentOrchestrator {
                     risk.fConsistency(), nciGlobal, risk.nciPersonalized(),
                     sentiment, finalConclusion);
 
-            log.info("✅ Rapport généré ({} bytes) — sauvegarde en attente du choix utilisateur", pdfBytes.length);
+            log.info("Rapport généré ({} bytes) — sauvegarde en attente du choix utilisateur", pdfBytes.length);
 
             return new ReportResult(
                     pdfBytes, ticker, companyName, userArgument,

@@ -74,8 +74,8 @@ public class ChatController {
     }
 
     /**
-     * ✅ Check company + backfill si inexistante.
-     * Retourne immédiatement l'état sans bloquer.
+     *Check company + backfill si inexistante.
+     *Retourne immédiatement l'état sans bloquer.
      */
     record CompanyCheckResponse(boolean exists, String message, String pipelineStatus) {}
 

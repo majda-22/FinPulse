@@ -15,7 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
- * ✅ Renommé : Agent9PdfAssembly → Agent4PdfAssembly
+ * Renommé : Agent9PdfAssembly → Agent4PdfAssembly
  * Pas de LLM — uniquement iText7 pour générer le PDF.
  */
 @Service
@@ -111,7 +111,7 @@ public class Agent4PdfAssembly {
 
             document.close();
 
-            log.info("✅ Agent4: PDF généré ({} bytes)", baos.size());
+            log.info("Agent4: PDF généré ({} bytes)", baos.size());
             return baos.toByteArray();
 
         } catch (Exception e) {
