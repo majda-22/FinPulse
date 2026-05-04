@@ -1,12 +1,11 @@
 package net.omaima.config;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.omaima.services.JwtTokenProvider;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 import jakarta.servlet.FilterChain;
@@ -19,16 +18,27 @@ import java.util.ArrayList;
 @Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private JwtTokenProvider tokenProvider;
-
+    private final JwtTokenProvider tokenProvider;
     private static final String BEARER_PREFIX = "Bearer ";
+    private final AntPathMatcher pathMatcher = new AntPathMatcher();
+
+    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider) {
+        this.tokenProvider = tokenProvider;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getServletPath();
+        return pathMatcher.match("/api/v2/auth/**", path) ||
+                pathMatcher.match("/health", path);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain)
             throws ServletException, IOException {
+
         try {
             String jwt = extractJwtFromRequest(request);
 
@@ -48,6 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         } catch (Exception e) {
             log.error("Error processing JWT", e);
+            SecurityContextHolder.clearContext();
         }
 
         filterChain.doFilter(request, response);

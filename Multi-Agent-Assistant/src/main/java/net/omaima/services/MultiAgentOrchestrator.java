@@ -157,9 +157,9 @@ public class MultiAgentOrchestrator {
                     
                     QUESTION: {question}
                     """)
-                            .arg("filedAt", filedAt)
-                            .arg("context", secContext)
-                            .arg("question", userMessage))
+                            .param("filedAt", filedAt)
+                            .param("context", secContext)
+                            .param("question", userMessage))
                     .call().content();
 
             chatSessionService.saveMessage(session, "USER", userMessage,
