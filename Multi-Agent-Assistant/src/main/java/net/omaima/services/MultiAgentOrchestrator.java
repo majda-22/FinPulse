@@ -52,6 +52,12 @@ public class MultiAgentOrchestrator {
 
         // Détection d'intention via LLM
         IntentResult intent = detectIntentWithLLM(userMessage, ticker);
+        try {
+            intent = detectIntentWithLLM(userMessage, ticker);
+        } catch (Exception e) {
+            log.error("LLM intent detection failed, falling back to CHATBOT mode", e);
+            intent = new IntentResult(Mode.CHATBOT, null);
+        }
         log.info("Intent: {}", intent.mode());
 
         return switch (intent.mode()) {
@@ -130,37 +136,53 @@ public class MultiAgentOrchestrator {
         log.info("=== MODE CHATBOT ===");
         ChatSession session = chatSessionService.createSession(user, ticker, "AGENT");
         try {
-            String companyName   = ingestionPipelineService.getCompanyName(ticker);
-            Double nciGlobal     = ingestionPipelineService.getNciGlobal(ticker);
+            log.info("Fetching company name...");
+            String companyName = ingestionPipelineService.getCompanyName(ticker);
+            log.info("Company name: {}", companyName);
+
+            log.info("Fetching NCI Global...");
+            Double nciGlobal = ingestionPipelineService.getNciGlobal(ticker);
+            log.info("NCI Global: {}", nciGlobal);
+
+            log.info("Fetching embedding text...");
             String embeddingText = ingestionPipelineService.getLatestEmbeddingText(ticker, 0);
-            String filedAt       = ingestionPipelineService.getLatestEmbeddingFiledAt(ticker);
-            Double priceClose    = ingestionPipelineService.getPriceClose(ticker);
+            log.info("Embedding text length: {}", embeddingText != null ? embeddingText.length() : 0);
+
+            log.info("Fetching filed_at...");
+            String filedAt = ingestionPipelineService.getLatestEmbeddingFiledAt(ticker);
+            log.info("Filed at: {}", filedAt);
+
+            log.info("Fetching price...");
+            Double priceClose = ingestionPipelineService.getPriceClose(ticker);
+            log.info("Price: {}", priceClose);
 
             String secContext = String.format(
                     "Entreprise: %s (%s)\nNCI Global: %.2f\nRapport SEC: %s\nPrix: $%.2f\n\n%s",
                     companyName, ticker, nciGlobal, filedAt, priceClose, embeddingText);
 
+            log.info("Calling Mistral AI...");
             String aiResponse = chatClient.prompt()
                     .user(u -> u.text("""
-                    Tu es un assistant financier expert et factuel pour FinPulse.
-                    
-                    RÈGLES ABSOLUES:
-                    - Réponds UNIQUEMENT à partir des données SEC fournies
-                    - Si l'info est absente: "Cette information n'est pas disponible dans le rapport SEC."
-                    - Ne jamais inventer de chiffres, dates ou faits
-                    - Hors sujet financier: "Je suis spécialisé en analyse financière."
-                    - Cite ta source: "Selon le rapport SEC du {filedAt}"
-                    - Sois concis, professionnel, factuel
-                    
-                    CONTEXTE SEC:
-                    {context}
-                    
-                    QUESTION: {question}
-                    """)
+                Tu es un assistant financier expert et factuel pour FinPulse.
+                
+                RÈGLES ABSOLUES:
+                - Réponds UNIQUEMENT à partir des données SEC fournies
+                - Si l'info est absente: "Cette information n'est pas disponible dans le rapport SEC."
+                - Ne jamais inventer de chiffres, dates ou faits
+                - Hors sujet financier: "Je suis spécialisé en analyse financière."
+                - Cite ta source: "Selon le rapport SEC du {filedAt}"
+                - Sois concis, professionnel, factuel
+                
+                CONTEXTE SEC:
+                {context}
+                
+                QUESTION: {question}
+                """)
                             .param("filedAt", filedAt)
                             .param("context", secContext)
                             .param("question", userMessage))
                     .call().content();
+            log.info("AI response received: {} chars", aiResponse != null ? aiResponse.length() : 0);
 
             chatSessionService.saveMessage(session, "USER", userMessage,
                     chatSessionService.detectIntent(userMessage), nciGlobal);
@@ -168,11 +190,10 @@ public class MultiAgentOrchestrator {
             return aiResponse;
 
         } catch (Exception e) {
-            log.error("Erreur chatbot", e);
+            log.error("Erreur chatbot: {}", e.getMessage(), e);
             return "Une erreur s'est produite. Veuillez réessayer.";
         }
     }
-
     // =====================================================================
     // MODE 2 : GÉNÉRATION RAPPORT — SANS sauvegarde automatique
     // =====================================================================
@@ -232,10 +253,11 @@ public class MultiAgentOrchestrator {
 
     public boolean checkIfCompanyExists(String ticker) {
         try {
-            ingestionPipelineService.getCompanyName(ticker);
-            return true;
+            String companyName = ingestionPipelineService.getCompanyName(ticker);
+            return companyName != null && !companyName.isBlank();
         } catch (Exception e) {
-            return false;
+            log.warn("Could not verify if company {} exists: {}", ticker, e.getMessage());
+            return false; // Si l'API est Down, on considère que l'entreprise n'existe pas
         }
     }
 
