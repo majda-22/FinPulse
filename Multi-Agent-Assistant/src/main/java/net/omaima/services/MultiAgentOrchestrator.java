@@ -43,7 +43,11 @@ public class MultiAgentOrchestrator {
 
         // Entreprise inconnue → backfill
         if (!checkIfCompanyExists(ticker)) {
-            ingestionPipelineService.triggerBackfillPipeline(ticker);
+            try {
+                ingestionPipelineService.triggerBackfillPipeline(ticker);
+            } catch (Exception e) {
+                log.warn("Backfill trigger failed for {}: {}", ticker, e.getMessage());
+            }
             return OrchestratorResult.clarification(
                     "L'entreprise " + ticker + " n'est pas encore dans notre base. " +
                             "Son ingestion est lancée. Veuillez réessayer dans quelques instants."
@@ -254,13 +258,20 @@ public class MultiAgentOrchestrator {
     public boolean checkIfCompanyExists(String ticker) {
         try {
             String companyName = ingestionPipelineService.getCompanyName(ticker);
-            return companyName != null && !companyName.isBlank();
+            log.info("Company check for {}: '{}'", ticker, companyName);
+
+            if (companyName != null && !companyName.isBlank()) {
+                return true;
+            }
+
+            log.warn("Company {} not found (null or blank name)", ticker);
+            return false;
+
         } catch (Exception e) {
-            log.warn("Could not verify if company {} exists: {}", ticker, e.getMessage());
-            return false; // Si l'API est Down, on considère que l'entreprise n'existe pas
+            log.error("Error checking company {}: {}", ticker, e.getMessage());
+            return false;
         }
     }
-
     public enum Mode { CHATBOT, REPORT, OUT_OF_SCOPE, NEEDS_CLARIFICATION }
 
     public record IntentResult(Mode mode, String clarificationQuestion) {}

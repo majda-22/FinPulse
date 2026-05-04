@@ -1,6 +1,7 @@
 package net.omaima.services;
 //service qui a fait la communication avec une API liée à l’ingestion des données.
 
+import java.util.Map;
 import org.springframework.http.MediaType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,7 +23,7 @@ public class IngestionPipelineService {
     @Value("${p1.api.url}")
     private String p1ApiUrl;
 
-    @Cacheable(value = "companyNames", key = "#ticker")
+    //@Cacheable(value = "companyNames", key = "#ticker")
     public String getCompanyName(String ticker) {
         log.info("1- Fetching company name for {}", ticker);
         try {
@@ -142,20 +143,28 @@ public class IngestionPipelineService {
     public String triggerBackfillPipeline(String ticker) {
         log.info("Triggering backfill pipeline for {}", ticker);
         try {
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("symbol", ticker);
+            body.put("identifier", ticker);
+            body.put("ten_k_max", 3);
+            body.put("ten_q_max", 4);
+            body.put("form4_max", 20);
+            body.put("form4_parse_limit", 20);
+            body.put("news_limit", 50);
+            body.put("run_signals", true);
+
             String response = webClient.post()
                     .uri("/api/v1/pipelines/backfill/company")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(new java.util.HashMap<String, String>() {{
-                        put("ticker", ticker);
-                    }})
+                    .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
 
+            log.info("Backfill response: {}", response);
             return response;
         } catch (Exception e) {
-            log.error("Error triggering pipeline", e);
+            log.error("Error triggering pipeline: {}", e.getMessage());
             throw new RuntimeException("Failed to trigger pipeline", e);
         }
-    }
-}
+    }}
