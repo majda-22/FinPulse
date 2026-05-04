@@ -1,7 +1,7 @@
 package net.omaima.services;
 //service qui a fait la communication avec une API liée à l’ingestion des données.
 
-
+import org.springframework.http.MediaType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -32,14 +32,20 @@ public class IngestionPipelineService {
                     .bodyToMono(String.class)
                     .block();
 
-            JsonNode node = objectMapper.readTree(response);
-            return node.get("value").asText();
+            log.info("API Response for {}: {}", ticker, response);
+
+            // L'API retourne directement une chaîne : "Tesla, Inc."
+            // Enlever les guillemets si présents
+            if (response != null && response.startsWith("\"") && response.endsWith("\"")) {
+                return response.substring(1, response.length() - 1);
+            }
+            return response;
+
         } catch (Exception e) {
-            log.error("Error fetching company name", e);
-            throw new RuntimeException("Failed to fetch company name", e);
+            log.error("Error fetching company name for {}", ticker, e);
+            return null;
         }
     }
-
     @Cacheable(value = "nciGlobal", key = "#ticker")
     public Double getNciGlobal(String ticker) {
         log.info("2- Fetching NCI Global for {}", ticker);
@@ -50,8 +56,7 @@ public class IngestionPipelineService {
                     .bodyToMono(String.class)
                     .block();
 
-            JsonNode node = objectMapper.readTree(response);
-            return node.get("value").asDouble();
+            return Double.parseDouble(response.trim());
         } catch (Exception e) {
             log.error("Error fetching NCI Global", e);
             throw new RuntimeException("Failed to fetch NCI Global", e);
@@ -68,8 +73,11 @@ public class IngestionPipelineService {
                     .bodyToMono(String.class)
                     .block();
 
-            JsonNode node = objectMapper.readTree(response);
-            return node.get("value").asText();
+            // Enlever les guillemets si présents
+            if (response != null && response.startsWith("\"") && response.endsWith("\"")) {
+                return response.substring(1, response.length() - 1);
+            }
+            return response;
         } catch (Exception e) {
             log.error("Error fetching embedding text", e);
             throw new RuntimeException("Failed to fetch embedding text", e);
@@ -86,8 +94,11 @@ public class IngestionPipelineService {
                     .bodyToMono(String.class)
                     .block();
 
-            JsonNode node = objectMapper.readTree(response);
-            return node.get("value").asText();
+            // Enlever les guillemets si présents
+            if (response != null && response.startsWith("\"") && response.endsWith("\"")) {
+                return response.substring(1, response.length() - 1);
+            }
+            return response;
         } catch (Exception e) {
             log.error("Error fetching filed_at", e);
             throw new RuntimeException("Failed to fetch filed_at", e);
@@ -104,8 +115,7 @@ public class IngestionPipelineService {
                     .bodyToMono(String.class)
                     .block();
 
-            JsonNode node = objectMapper.readTree(response);
-            return node.get("value").asDouble();
+            return Double.parseDouble(response.trim());
         } catch (Exception e) {
             log.error("Error fetching price", e);
             return null;
@@ -122,8 +132,7 @@ public class IngestionPipelineService {
                     .bodyToMono(String.class)
                     .block();
 
-            JsonNode node = objectMapper.readTree(response);
-            return node.get("value").asDouble();
+            return Double.parseDouble(response.trim());
         } catch (Exception e) {
             log.error("Error fetching sentiment", e);
             return 0.0;
@@ -134,7 +143,8 @@ public class IngestionPipelineService {
         log.info("Triggering backfill pipeline for {}", ticker);
         try {
             String response = webClient.post()
-                    .uri("/api/v1/pipelines/backfill")
+                    .uri("/api/v1/pipelines/backfill/company")
+                    .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(new java.util.HashMap<String, String>() {{
                         put("ticker", ticker);
                     }})
