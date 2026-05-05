@@ -386,6 +386,7 @@ def validate_embedding_batch(embeddings: np.ndarray) -> dict:
         "total": n_total,
         "valid": int(valid_mask.sum()),
         "rejected_nan": int(has_nan.sum()),
+        "rejected_inf": int(has_inf.sum()),   
         "rejected_zero": int(is_zero.sum()),
         "valid_mask": valid_mask,
         "coverage_ratio": float(valid_mask.sum()) / n_total if n_total > 0 else 0.0
@@ -474,10 +475,9 @@ def compute_embeddings_anomaly_scores(session, filing_id: int, commit: bool = Tr
     updated_count = 0
     mse_scores = []
     
-    for embedding in embeddings:
+    for embedding, arr in zip(embeddings, embedding_arrays):
         # Convertir en tensor
-        for embedding, arr in zip(embeddings, embedding_arrays):
-             embedding_tensor = torch.FloatTensor([arr]).to(manager.device)
+        embedding_tensor = torch.FloatTensor([arr]).to(manager.device)
         
         # Reconstruction
         with torch.no_grad():
