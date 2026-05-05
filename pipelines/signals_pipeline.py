@@ -108,7 +108,7 @@ def run_all_signals(
 
 def _run_autoencoder_stage(*, filing_id: int, db: Session) -> StageRunSummary:
     try:
-        compute_embeddings_anomaly_scores(db, filing_id, commit=False)
+        compute_embeddings_anomaly_scores(db, filing_id, commit=True)
         logger.info("Autoencoder embeddings scored for filing %d", filing_id)
         status = "scored"
     except Exception as exc:

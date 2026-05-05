@@ -362,8 +362,34 @@ def train_autoencoders_for_all_sectors(session, sector_codes: Optional[List[str]
     
     logger.info(f"✅ Training complete. Trained {len(trained_sectors)} sectors")
     return trained_sectors
-
-
+# ============================================================================
+#  Valider la qualité des embeddings avant scoring
+# ============================================================================
+def validate_embedding_batch(embeddings: np.ndarray) -> dict:
+    """
+    Vérifie que les embeddings sont exploitables avant de les passer à l'autoencoder.
+    Retourne un rapport avec les embeddings valides seulement.
+    """
+    n_total = len(embeddings)
+    
+    # Détecter NaN et inf
+    has_nan = np.any(np.isnan(embeddings), axis=1)
+    has_inf = np.any(np.isinf(embeddings), axis=1)
+    
+    # Détecter vecteurs nuls (embedding raté)
+    norms = np.linalg.norm(embeddings, axis=1)
+    is_zero = norms < 1e-6
+    
+    valid_mask = ~(has_nan | has_inf | is_zero)
+    
+    return {
+        "total": n_total,
+        "valid": int(valid_mask.sum()),
+        "rejected_nan": int(has_nan.sum()),
+        "rejected_zero": int(is_zero.sum()),
+        "valid_mask": valid_mask,
+        "coverage_ratio": float(valid_mask.sum()) / n_total if n_total > 0 else 0.0
+    }
 # ============================================================================
 # 4. FONCTION PUBLIQUE: SCORER LES EMBEDDINGS
 # ============================================================================
@@ -390,6 +416,7 @@ def compute_embeddings_anomaly_scores(session, filing_id: int, commit: bool = Tr
         >>> compute_embeddings_anomaly_scores(session, filing_id=12345)
         >>> # BD mise à jour avec reconstruction_error et anomaly_score
     """
+
     from app.db.models import Embedding, Filing, Company
     
     manager = SectorAutoencoderManager()
@@ -412,6 +439,29 @@ def compute_embeddings_anomaly_scores(session, filing_id: int, commit: bool = Tr
         f"Processing filing {filing_id} ({filing.company.name}): "
         f"{len(embeddings)} embeddings"
     )
+    # ── NOUVEAU: extraire les arrays AVANT la garde ──────────────────────────
+    embedding_arrays = np.array([
+        np.array(e.embedding, dtype=np.float32) for e in embeddings
+    ])
+    
+    report = validate_embedding_batch(embedding_arrays)
+    logger.info(
+        f"Validation: {report['valid']}/{report['total']} valides "
+        f"(NaN: {report['rejected_nan']}, zéros: {report['rejected_zero']})"
+    )
+    
+    if report["coverage_ratio"] < 0.5:
+        logger.error(
+            f"Filing {filing_id}: seulement {report['coverage_ratio']:.0%} "
+            f"embeddings valides — scoring annulé"
+        )
+        return
+    
+    # Filtrer: ORM objects + arrays alignés sur le même masque
+    valid_mask = report["valid_mask"]
+    embeddings       = [e for e, m in zip(embeddings, valid_mask) if m]
+    embedding_arrays = embedding_arrays[valid_mask]
+    # ── FIN NOUVEAU ──────────────────────────────────────────────────────────
     
     sector_code = filing.company.sic_code
     model, threshold = manager.load_model(sector_code)
@@ -426,8 +476,8 @@ def compute_embeddings_anomaly_scores(session, filing_id: int, commit: bool = Tr
     
     for embedding in embeddings:
         # Convertir en tensor
-        embedding_array = np.array(embedding.embedding, dtype=np.float32)
-        embedding_tensor = torch.FloatTensor([embedding_array]).to(manager.device)
+        for embedding, arr in zip(embeddings, embedding_arrays):
+             embedding_tensor = torch.FloatTensor([arr]).to(manager.device)
         
         # Reconstruction
         with torch.no_grad():
