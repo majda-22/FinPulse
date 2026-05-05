@@ -21,6 +21,7 @@ from signals.policies import (
     CARRY_FORWARD_STALENESS_PENALTY,
     CONVERGENCE_THRESHOLDS,
     CONVERGENCE_TIERS,
+    CONVERGENCE_TRIPLET,
     NCI_COVERAGE_HIGH,
     NCI_COVERAGE_MEDIUM,
     NCI_FIXED_MAX_EXPECTED_RAW,
@@ -370,9 +371,10 @@ def _build_triplet_convergence_signal(
     insider_signal = signal_values.get("insider_signal")
 
     # ── Seuils ──
-    rlds_threshold = 0.25
-    forward_pessimism_threshold = 0.25
-    insider_threshold = 0.15
+    # ── Seuils (depuis policies.py) ──
+    rlds_threshold             = CONVERGENCE_TRIPLET["rlds_threshold"]
+    forward_pessimism_threshold = CONVERGENCE_TRIPLET["forward_pessimism_threshold"]
+    insider_threshold          = CONVERGENCE_TRIPLET["ita_threshold"]
 
     # ── Vérifier lesquels sont élevés ──
     rlds_elevated = rlds is not None and rlds >= rlds_threshold
@@ -384,11 +386,9 @@ def _build_triplet_convergence_signal(
 
     # ── Calculer le boost ──
     if count == 3:
-        triplet_boost = 0.25
-        triplet_confidence = "full"
+        triplet_boost = CONVERGENCE_TRIPLET["boost_full"]
     elif count == 2:
-        triplet_boost = 0.15
-        triplet_confidence = "strong"
+        triplet_boost = CONVERGENCE_TRIPLET["boost_strong"]
     elif count == 1:
         triplet_boost = 0.0
         triplet_confidence = "weak"
@@ -396,6 +396,12 @@ def _build_triplet_convergence_signal(
         triplet_boost = 0.0
         triplet_confidence = "none"
 
+    # ── Garde : ne pas booster si confiance globale trop faible ──  ← ICI
+    min_confidence = CONVERGENCE_TRIPLET["min_confidence_for_boost"]
+    overall_confidence = signal_values.get("_overall_confidence", 1.0)
+    if overall_confidence < min_confidence and triplet_boost > 0:
+        triplet_boost = 0.0
+        triplet_confidence = "blocked_low_confidence"
     # ── Construire le résultat ──
     return ComputedCompositeSignal(
         filing_id=filing.id,

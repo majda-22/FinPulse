@@ -123,3 +123,12 @@ NCI_CRITICAL_LAYER_SIGNALS = {
     ),
     "behavior": ("insider_signal",),
 }
+CONVERGENCE_TRIPLET = {
+    "rlds_threshold": 0.25,
+    "forward_pessimism_threshold": 0.25,
+    "ita_threshold": 0.15,
+    "boost_full": 0.25,       # 3/3 signaux
+    "boost_strong": 0.15,     # 2/3 signaux
+    "boost_weak": 0.0,        # 1/3 signaux
+    "min_confidence_for_boost": 0.4,
+}
