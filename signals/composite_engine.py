@@ -387,8 +387,10 @@ def _build_triplet_convergence_signal(
     # ── Calculer le boost ──
     if count == 3:
         triplet_boost = CONVERGENCE_TRIPLET["boost_full"]
+        triplet_confidence = "full"  
     elif count == 2:
         triplet_boost = CONVERGENCE_TRIPLET["boost_strong"]
+        triplet_confidence = "strong"  
     elif count == 1:
         triplet_boost = 0.0
         triplet_confidence = "weak"
@@ -402,6 +404,15 @@ def _build_triplet_convergence_signal(
     if overall_confidence < min_confidence and triplet_boost > 0:
         triplet_boost = 0.0
         triplet_confidence = "blocked_low_confidence"
+     # ── Interprétation (gère tous les cas) ──
+    interpretation_map = {
+        "full": "Convergence maximale: anomalie texte + pessimisme guidance + ventes insiders",
+        "strong": "Convergence forte: 2 des 3 indicateurs présents",
+        "weak": "Convergence faible: 1 seul indicateur présent",
+        "none": "Aucune convergence: aucun indicateur élevé",
+        "blocked_low_confidence": "Boost bloqué: confiance globale insuffisante",
+    }
+
     # ── Construire le résultat ──
     return ComputedCompositeSignal(
         filing_id=filing.id,
@@ -540,7 +551,37 @@ def _build_nci_signal(
         current_filing_id=filing.id,
     )
     boosted_score = float(normalization["value"])
+    # ── Détail du boost triplet ──
+    triplet_detail = {}
+    triplet_signals_fired = []
+    
+    # Récupérer le détail du triplet depuis signal_values
+    rlds = signal_values.get("rlds")
+    forward_pessimism = signal_values.get("forward_pessimism")
+    insider_signal = signal_values.get("insider_signal")
+    
+    if rlds is not None and rlds >= CONVERGENCE_TRIPLET["rlds_threshold"]:
+        triplet_signals_fired.append("rlds")
+    if forward_pessimism is not None and forward_pessimism >= CONVERGENCE_TRIPLET["forward_pessimism_threshold"]:
+        triplet_signals_fired.append("forward_pessimism")
+    if insider_signal is not None and insider_signal >= CONVERGENCE_TRIPLET["ita_threshold"]:
+        triplet_signals_fired.append("ita")
 
+    pre_boost_nci = float(_normalize_nci_value(
+        db,
+        raw_total=raw_score,  # sans le boost
+        model_version=model_version,
+        current_filing_id=filing.id,
+    )["value"])
+
+    triplet_detail = {
+        "convergence_boost_applied": convergence_boost > 0,
+        "convergence_tier": convergence.detail.get("tier", "none"),
+        "triplet_signals_fired": triplet_signals_fired,
+        "boost_value": convergence_boost,
+        "pre_boost_nci": round(pre_boost_nci, 4),
+        "post_boost_nci": round(boosted_score, 4),
+    }
     confidence_scores = []
     for name in active_weights:
         resolution = input_resolutions.get(name)
@@ -584,6 +625,7 @@ def _build_nci_signal(
             "raw_score": raw_score,
             "raw_total_before_normalization": raw_total,
             "convergence_boost": convergence_boost,
+            "triplet_boost_detail": triplet_detail,
             "normalization_method": normalization["method"],
             "normalization_reference_count": normalization["history_count"],
             "normalization_mean": normalization.get("mean"),
