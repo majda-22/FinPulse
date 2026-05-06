@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep -vf /tmp/exclude.txt)",
-      "Bash(grep -E \"\\(^[^/]*\\\\.py$|app/|pipelines/|signals/|ingestion/|processing/\\)\")"
-    ]
-  }
-}
