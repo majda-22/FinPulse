@@ -34,11 +34,17 @@ public class MultiAgentOrchestrator {
         log.info("=== ORCHESTRATOR === user={} ticker={}", user.getUsername(), ticker);
 
         // Ticker manquant → demande de clarification immédiate
+        // CASUAL + AUTO‑EXTRACTION
         if (ticker == null || ticker.isBlank()) {
-            return OrchestratorResult.clarification(
-                    "Pour vous aider, j'ai besoin du ticker de l'entreprise (ex: AAPL, TSLA, MSFT). " +
-                            "Quelle entreprise souhaitez-vous analyser ?"
-            );
+            String extracted = extractTickerFromMessage(userMessage);
+            if (extracted != null) {
+                ticker = extracted;
+                log.info("Ticker extracted from message: {}", ticker);
+                // Continue to financial flow below (do not return)
+            } else {
+                // No ticker in message → casual conversation
+                return OrchestratorResult.chatResponse(handleCasualChat(user, userMessage));
+            }
         }
 
         // Entreprise inconnue → backfill
@@ -55,7 +61,7 @@ public class MultiAgentOrchestrator {
         }
 
         // Détection d'intention via LLM
-        IntentResult intent = detectIntentWithLLM(userMessage, ticker);
+        IntentResult intent ;
         try {
             intent = detectIntentWithLLM(userMessage, ticker);
         } catch (Exception e) {
@@ -198,6 +204,76 @@ public class MultiAgentOrchestrator {
             return "Une erreur s'est produite. Veuillez réessayer.";
         }
     }
+
+
+
+    /**
+     * Uses Mistral to extract a stock ticker from a natural language message.
+     * Returns the uppercase ticker symbol, or null if none is found.
+     */
+    private String extractTickerFromMessage(String message) {
+        try {
+            String prompt = """
+            You are a stock ticker extractor. 
+            From the following user message, return ONLY the stock ticker symbol if one is mentioned.
+            If no ticker is mentioned, return exactly the word NONE.
+            Never return anything else – just the ticker or NONE.
+            
+            Examples:
+            "Tell me about Tesla" → TSLA
+            "Comment va Apple?" → AAPL
+            "What's the price of MSFT?" → MSFT
+            "Hello, how are you?" → NONE
+            
+            Message: "%s"
+            """.formatted(message);
+
+            String response = chatClient.prompt().user(prompt).call().content();
+            String cleaned = response.trim().toUpperCase().replaceAll("[^A-Z]", "");
+
+            if (cleaned.equals("NONE") || cleaned.length() < 2 || cleaned.length() > 5) {
+                return null;
+            }
+            return cleaned;
+        } catch (Exception e) {
+            log.warn("Ticker extraction failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+
+    /**
+     * Handles casual conversation without any ticker.
+     * Uses Mistral to generate a friendly, finance‑aware response.
+     */
+    public String handleCasualChat(User user, String userMessage) {
+        log.info("=== MODE CASUAL CHAT ===");
+        ChatSession session = chatSessionService.createSession(user, "CASUAL", "CASUAL");
+        try {
+            String aiResponse = chatClient.prompt()
+                    .user(u -> u.text("""
+                Tu es FinPulse, un assistant financier sympathique et professionnel.
+                
+                RÈGLES:
+                - Si l'utilisateur te salue, réponds de manière amicale et propose ton aide pour analyser des entreprises cotées.
+                - Si la question n'est pas liée à la finance, rappelle poliment que tu es spécialisé en analyse financière et donne des exemples de ce que tu peux faire (analyser une entreprise, générer un rapport, donner le sentiment du marché).
+                - Reste concis et utile.
+                
+                Message de l'utilisateur : {message}
+                """)
+                            .param("message", userMessage))
+                    .call().content();
+
+            chatSessionService.saveMessage(session, "USER", userMessage, "CASUAL", null);
+            chatSessionService.saveMessage(session, "AI", aiResponse, "RESPONSE", null);
+            return aiResponse;
+
+        } catch (Exception e) {
+            log.error("Erreur casual chat", e);
+            return "Désolé, une erreur est survenue. Pouvez-vous reformuler ?";
+        }
+    }
+
     // =====================================================================
     // MODE 2 : GÉNÉRATION RAPPORT — SANS sauvegarde automatique
     // =====================================================================
